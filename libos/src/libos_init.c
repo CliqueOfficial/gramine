@@ -398,6 +398,7 @@ noreturn void libos_init(const char* const* argv, const char* const* envp) {
     }
 
     RUN_INIT(init_vma);
+    RUN_INIT(init_r_debug);
     RUN_INIT(init_slab);
     RUN_INIT(read_environs, envp);
     RUN_INIT(init_rlimit);
@@ -405,7 +406,6 @@ noreturn void libos_init(const char* const* argv, const char* const* envp) {
     RUN_INIT(init_fs_lock);
     RUN_INIT(init_dcache);
     RUN_INIT(init_handle);
-    RUN_INIT(init_r_debug);
 
     log_debug("LibOS loaded at %p, ready to initialize", &__load_address);
 
@@ -502,6 +502,8 @@ noreturn void libos_init(const char* const* argv, const char* const* envp) {
     RUN_INIT(set_hostname, g_pal_public_state->dns_host.hostname,
              strlen(g_pal_public_state->dns_host.hostname));
 
+    RUN_INIT(init_eventfd_mode);
+
     log_debug("LibOS initialized");
 
     libos_tcb_t* cur_tcb = libos_get_tcb();
@@ -546,8 +548,7 @@ int create_pipe(char* name, char* uri, size_t size, PAL_HANDLE* hdl, bool use_vm
 
     while (true) {
         if (use_vmid_for_name) {
-            len = snprintf(pipename, sizeof(pipename), "%lu/%u", g_pal_public_state->instance_id,
-                           g_process_ipc_ids.self_vmid);
+            len = snprintf(pipename, sizeof(pipename), "%u", g_process_ipc_ids.self_vmid);
             if (len >= sizeof(pipename))
                 return -ERANGE;
         } else {
@@ -558,8 +559,10 @@ int create_pipe(char* name, char* uri, size_t size, PAL_HANDLE* hdl, bool use_vm
                 return ret;
         }
 
-        log_debug("Creating pipe: " URI_PREFIX_PIPE_SRV "%s", pipename);
-        len = snprintf(uri, size, URI_PREFIX_PIPE_SRV "%s", pipename);
+        log_debug("Creating pipe: " URI_PREFIX_PIPE_SRV "%lu/%s", g_pal_public_state->instance_id,
+                  pipename);
+        len = snprintf(uri, size, URI_PREFIX_PIPE_SRV "%lu/%s", g_pal_public_state->instance_id,
+                       pipename);
         if (len >= size)
             return -ERANGE;
 
@@ -578,7 +581,10 @@ int create_pipe(char* name, char* uri, size_t size, PAL_HANDLE* hdl, bool use_vm
 
     /* output generated pipe handle, URI, and name */
     *hdl = pipe;
-    len = snprintf(uri, size, URI_PREFIX_PIPE "%s", pipename);
+    len = snprintf(uri, size, URI_PREFIX_PIPE "%lu/%s", g_pal_public_state->instance_id, pipename);
+    static_assert(static_strlen(URI_PREFIX_PIPE) < static_strlen(URI_PREFIX_PIPE_SRV),
+                  "without this condition the assert below should be changed into an `if`");
+    assert(len < size); /* must hold because above we did the same but with longer prefix */
     if (name)
         memcpy(name, pipename, sizeof(pipename));
     return 0;

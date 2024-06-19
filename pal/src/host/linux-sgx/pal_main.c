@@ -428,6 +428,7 @@ static int print_warnings_on_insecure_configs(PAL_HANDLE parent_process) {
     bool allow_all_files      = false;
     bool use_allowed_files    = g_allowed_files_warn;
     bool encrypted_files_keys = false;
+    bool memfaults_without_exinfo_allowed = g_pal_linuxsgx_state.memfaults_without_exinfo_allowed;
 
     char* log_level_str = NULL;
 
@@ -485,7 +486,7 @@ static int print_warnings_on_insecure_configs(PAL_HANDLE parent_process) {
 
     if (!verbose_log_level && !sgx_debug && !use_cmdline_argv && !use_host_env && !disable_aslr &&
             !allow_eventfd && !experimental_flock && !allow_all_files && !use_allowed_files &&
-            !encrypted_files_keys) {
+            !encrypted_files_keys && !memfaults_without_exinfo_allowed) {
         /* there are no insecure configurations, skip printing */
         ret = 0;
         goto out;
@@ -523,6 +524,10 @@ static int print_warnings_on_insecure_configs(PAL_HANDLE parent_process) {
         log_always("  - sys.experimental__enable_flock = true      "
                    "(flock syscall is enabled; still under development and may contain bugs)");
 
+    if (memfaults_without_exinfo_allowed)
+        log_always("  - sgx.insecure__allow_memfaults_without_exinfo "
+                   "(allow memory faults even when SGX EXINFO is not supported by CPU)");
+
     if (allow_all_files)
         log_always("  - sgx.file_check_policy = allow_all_but_log  "
                    "(all files are passed through from untrusted host without verification)");
@@ -534,6 +539,7 @@ static int print_warnings_on_insecure_configs(PAL_HANDLE parent_process) {
     if (encrypted_files_keys)
         log_always("  - fs.insecure__keys.* = \"...\"                "
                    "(keys hardcoded in manifest)");
+
 
     log_always("\nGramine will continue application execution, but this configuration must not be "
                "used in production!");
@@ -631,6 +637,14 @@ noreturn void pal_linux_main(void* uptr_libpal_uri, size_t libpal_uri_len, void*
     g_pal_public_state.memory_address_start = g_pal_linuxsgx_state.heap_min;
     g_pal_public_state.memory_address_end = g_pal_linuxsgx_state.heap_max;
 
+    if (ranges_overlap((uintptr_t)g_enclave_base, (uintptr_t)g_enclave_top,
+                       SHARED_ADDR_MIN, SHARED_ADDR_MIN + SHARED_MEM_SIZE)
+        || ranges_overlap((uintptr_t)g_enclave_base, (uintptr_t)g_enclave_top,
+                       DBGINFO_ADDR, DBGINFO_ADDR + sizeof(struct enclave_dbginfo))) {
+        /* This should have been already checked by untrusted PAL with a more descriptive error */
+        log_error("Enclave overlaps with some hardcoded regions");
+        ocall_exit(1, /*is_exitgroup=*/true);
+    }
     static_assert(SHARED_ADDR_MIN >= DBGINFO_ADDR + sizeof(struct enclave_dbginfo)
                       || DBGINFO_ADDR >= SHARED_ADDR_MIN + SHARED_MEM_SIZE,
                   "SHARED_ADDR overlaps with DBGINFO_ADDR");
@@ -679,12 +693,8 @@ noreturn void pal_linux_main(void* uptr_libpal_uri, size_t libpal_uri_len, void*
     /* Now that we have `libpal_path`, set name for PAL map */
     set_pal_binary_name(libpal_path + URI_PREFIX_FILE_LEN);
 
-    /* We can't verify the following arguments from the host. So we copy them directly but need to
-     * be careful when we use them. */
-    if (!sgx_copy_to_enclave(&g_pal_linuxsgx_state.qe_targetinfo,
-                             sizeof(g_pal_linuxsgx_state.qe_targetinfo),
-                             uptr_qe_targetinfo,
-                             sizeof(sgx_target_info_t))) {
+    ret = init_qe_targetinfo(uptr_qe_targetinfo);
+    if (ret < 0) {
         log_error("Copying qe_targetinfo into the enclave failed");
         ocall_exit(1, /*is_exitgroup=*/true);
     }
@@ -771,6 +781,16 @@ noreturn void pal_linux_main(void* uptr_libpal_uri, size_t libpal_uri_len, void*
     if (edmm_enabled_manifest != edmm_enabled) {
         log_error("edmm_enabled_manifest(=%d) != edmm_enabled(=%d)", edmm_enabled_manifest,
                   edmm_enabled);
+        ocall_exit(1, /*is_exitgroup=*/true);
+    }
+
+    /* TODO: temporarily allow old CPUs (that don't have EXINFO for #PF and #GP memory faults)
+     *       to deliver memory faults instead of terminating; remove this in future */
+    ret = toml_bool_in(g_pal_public_state.manifest_root,
+                       "sgx.insecure__allow_memfaults_without_exinfo", /*defaultval=*/false,
+                       &g_pal_linuxsgx_state.memfaults_without_exinfo_allowed);
+    if (ret < 0) {
+        log_error("Cannot parse 'sgx.insecure__allow_memfaults_without_exinfo'");
         ocall_exit(1, /*is_exitgroup=*/true);
     }
 

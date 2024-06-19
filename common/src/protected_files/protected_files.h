@@ -12,8 +12,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/*! Size of the AES-GCM encryption key */
-#define PF_KEY_SIZE 16
+#define PF_NODE_SIZE 4096U
 
 /*! Size of IV for AES-GCM */
 #define PF_IV_SIZE 12
@@ -21,15 +20,16 @@
 /*! Size of MAC fields */
 #define PF_MAC_SIZE 16
 
+/*! Size of the AES-GCM encryption key */
+#define PF_KEY_SIZE 16
+
+/*! Size of the nonce used in KDF (Key Derivation Function) */
+#define PF_NONCE_SIZE 32
+
 typedef uint8_t pf_iv_t[PF_IV_SIZE];
 typedef uint8_t pf_mac_t[PF_MAC_SIZE];
 typedef uint8_t pf_key_t[PF_KEY_SIZE];
-typedef uint8_t pf_keyid_t[32]; /* key derivation material */
-
-extern pf_key_t g_pf_mrenclave_key;
-extern pf_key_t g_pf_mrsigner_key;
-extern pf_key_t g_pf_wrap_key;
-extern bool g_pf_wrap_key_set;
+typedef uint8_t pf_keyid_t[PF_NONCE_SIZE];
 
 typedef enum _pf_status_t {
     PF_STATUS_SUCCESS              = 0,
@@ -55,8 +55,6 @@ typedef enum _pf_status_t {
 #define PF_SUCCESS(status) ((status) == PF_STATUS_SUCCESS)
 #define PF_FAILURE(status) ((status) != PF_STATUS_SUCCESS)
 
-#define PF_NODE_SIZE 4096U
-
 /*! PF open modes */
 typedef enum _pf_file_mode_t {
     PF_FILE_MODE_READ  = 1,
@@ -65,6 +63,9 @@ typedef enum _pf_file_mode_t {
 
 /*! Opaque file handle type, interpreted by callbacks as necessary */
 typedef void* pf_handle_t;
+
+/*! Context representing an open protected file */
+typedef struct pf_context pf_context_t;
 
 /*!
  * \brief File read callback.
@@ -90,6 +91,15 @@ typedef pf_status_t (*pf_read_f)(pf_handle_t handle, void* buffer, uint64_t offs
  */
 typedef pf_status_t (*pf_write_f)(pf_handle_t handle, const void* buffer, uint64_t offset,
                                   size_t size);
+
+/*!
+ * \brief File sync callback.
+ *
+ * \param handle  File handle.
+ *
+ * \returns PF status.
+ */
+typedef pf_status_t (*pf_fsync_f)(pf_handle_t handle);
 
 /*!
  * \brief File truncate callback.
@@ -172,6 +182,7 @@ typedef pf_status_t (*pf_random_f)(uint8_t* buffer, size_t size);
  *
  * \param read_f             File read callback.
  * \param write_f            File write callback.
+ * \param fsync_f            File sync callback.
  * \param truncate_f         File truncate callback.
  * \param aes_cmac_f         AES-CMAC callback.
  * \param aes_gcm_encrypt_f  AES-GCM encrypt callback.
@@ -181,13 +192,11 @@ typedef pf_status_t (*pf_random_f)(uint8_t* buffer, size_t size);
  *
  * Must be called before any actual APIs.
  */
-void pf_set_callbacks(pf_read_f read_f, pf_write_f write_f, pf_truncate_f truncate_f,
-                      pf_aes_cmac_f aes_cmac_f, pf_aes_gcm_encrypt_f aes_gcm_encrypt_f,
+void pf_set_callbacks(pf_read_f read_f, pf_write_f write_f, pf_fsync_f fsync_f,
+                      pf_truncate_f truncate_f, pf_aes_cmac_f aes_cmac_f,
+                      pf_aes_gcm_encrypt_f aes_gcm_encrypt_f,
                       pf_aes_gcm_decrypt_f aes_gcm_decrypt_f, pf_random_f random_f,
                       pf_debug_f debug_f);
-
-/*! Context representing an open protected file */
-typedef struct pf_context pf_context_t;
 
 /* Public API */
 
@@ -270,8 +279,7 @@ pf_status_t pf_get_size(pf_context_t* pf, uint64_t* size);
  *
  * \returns PF status.
  *
- * If the file is extended, added bytes are zero. Shrinking to arbitrary size is not implemented
- * yet (TODO).
+ * If the file is extended, added bytes are zero.
  */
 pf_status_t pf_set_size(pf_context_t* pf, uint64_t size);
 
@@ -285,16 +293,6 @@ pf_status_t pf_set_size(pf_context_t* pf, uint64_t size);
  * for renaming the underlying file.
  */
 pf_status_t pf_rename(pf_context_t* pf, const char* new_path);
-
-/*!
- * \brief Get underlying handle of a PF.
- *
- * \param      pf      PF context.
- * \param[out] handle  Handle to the backing file.
- *
- * \returns PF status.
- */
-pf_status_t pf_get_handle(pf_context_t* pf, pf_handle_t* handle);
 
 /*!
  * \brief Flush any pending data of a protected file to disk.

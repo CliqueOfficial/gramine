@@ -36,7 +36,8 @@ static ssize_t read(struct libos_handle* handle, void* buf, size_t size, file_of
     };
     unsigned int flags = 0;
     return do_recvmsg(handle, &iov, /*iov_len=*/1, /*msg_control=*/NULL,
-                      /*msg_controllen_ptr=*/NULL, /*addr=*/NULL, /*addrlen_ptr=*/NULL, &flags);
+                      /*msg_controllen_ptr=*/NULL, /*addr=*/NULL, /*addrlen_ptr=*/NULL, &flags,
+                      /*emulate_recv_error_semantics=*/false);
 }
 
 static ssize_t write(struct libos_handle* handle, const void* buf, size_t size, file_off_t* pos) {
@@ -54,7 +55,8 @@ static ssize_t readv(struct libos_handle* handle, struct iovec* iov, size_t iov_
     __UNUSED(pos);
     unsigned int flags = 0;
     return do_recvmsg(handle, iov, iov_len, /*msg_control=*/NULL, /*msg_controllen_ptr=*/NULL,
-                      /*addr=*/NULL, /*addrlen_ptr=*/NULL, &flags);
+                      /*addr=*/NULL, /*addrlen_ptr=*/NULL, &flags,
+                      /*emulate_recv_error_semantics=*/false);
 }
 
 static ssize_t writev(struct libos_handle* handle, struct iovec* iov, size_t iov_len,
@@ -222,6 +224,15 @@ static int checkin(struct libos_handle* handle) {
     return 0;
 }
 
+static void post_poll(struct libos_handle* hdl, pal_wait_flags_t* pal_ret_events) {
+    assert(hdl->type == TYPE_SOCK);
+
+    if (*pal_ret_events & (PAL_WAIT_READ | PAL_WAIT_WRITE)) {
+        bool error_event = !!(*pal_ret_events & (PAL_WAIT_ERROR | PAL_WAIT_HANG_UP));
+        check_connect_inprogress_on_poll(hdl, error_event);
+    }
+}
+
 static struct libos_fs_ops socket_fs_ops = {
     .close    = close,
     .read     = read,
@@ -233,6 +244,7 @@ static struct libos_fs_ops socket_fs_ops = {
     .ioctl    = ioctl,
     .checkout = checkout,
     .checkin  = checkin,
+    .post_poll = &post_poll,
 };
 
 struct libos_fs socket_builtin_fs = {

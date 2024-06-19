@@ -378,7 +378,11 @@ class TC_01_Bootstrap(RegressionTestCase):
         with self.expect_returncode(134):
             self.run_binary(['abort_multithread'])
 
-    def test_404_sigprocmask_pending(self):
+    def test_404_sigterm_multithread(self):
+        stdout, _ = self.run_binary(['sigterm_multithread'], prefix=['./test_sigterm.sh'])
+        self.assertIn('SHELL OK', stdout)
+
+    def test_405_sigprocmask_pending(self):
         stdout, _ = self.run_binary(['sigprocmask_pending'], timeout=60)
         self.assertIn('Child OK', stdout)
         self.assertIn('All tests OK', stdout)
@@ -701,7 +705,7 @@ class TC_30_Syscall(RegressionTestCase):
 
         self.assertIn('TEST OK', stdout)
 
-    def test_033_rename_unlink_chroot(self):
+    def test_033a_rename_unlink_chroot(self):
         file1 = 'tmp/file1'
         file2 = 'tmp/file2'
         try:
@@ -712,7 +716,7 @@ class TC_30_Syscall(RegressionTestCase):
                     os.unlink(path)
         self.assertIn('TEST OK', stdout)
 
-    def test_034_rename_unlink_pf(self):
+    def test_033b_rename_unlink_pf(self):
         os.makedirs('tmp/pf', exist_ok=True)
         file1 = 'tmp/pf/file1'
         file2 = 'tmp/pf/file2'
@@ -724,7 +728,7 @@ class TC_30_Syscall(RegressionTestCase):
                     os.unlink(path)
         self.assertIn('TEST OK', stdout)
 
-    def test_035_rename_unlink_enc(self):
+    def test_033c_rename_unlink_enc(self):
         os.makedirs('tmp_enc', exist_ok=True)
         file1 = 'tmp_enc/file1'
         file2 = 'tmp_enc/file2'
@@ -740,10 +744,55 @@ class TC_30_Syscall(RegressionTestCase):
                     os.unlink(path)
         self.assertIn('TEST OK', stdout)
 
-    def test_036_rename_unlink_tmpfs(self):
+    def test_033d_rename_unlink_tmpfs(self):
         file1 = '/mnt/tmpfs/file1'
         file2 = '/mnt/tmpfs/file2'
         stdout, _ = self.run_binary(['rename_unlink', file1, file2])
+        self.assertIn('TEST OK', stdout)
+
+    def test_034a_rename_unlink_fchown_chroot(self):
+        file1 = 'tmp/file1'
+        file2 = 'tmp/file2'
+        try:
+            stdout, _ = self.run_binary(['rename_unlink_fchown', file1, file2])
+        finally:
+            for path in [file1, file2]:
+                if os.path.exists(path):
+                    os.unlink(path)
+        self.assertIn('TEST OK', stdout)
+
+    def test_034b_rename_unlink_fchown_pf(self):
+        os.makedirs('tmp/pf', exist_ok=True)
+        file1 = 'tmp/pf/file1'
+        file2 = 'tmp/pf/file2'
+        try:
+            stdout, _ = self.run_binary(['rename_unlink_fchown', file1, file2])
+        finally:
+            for path in [file1, file2]:
+                if os.path.exists(path):
+                    os.unlink(path)
+        self.assertIn('TEST OK', stdout)
+
+    def test_034c_rename_unlink_fchown_enc(self):
+        os.makedirs('tmp_enc', exist_ok=True)
+        file1 = 'tmp_enc/file1'
+        file2 = 'tmp_enc/file2'
+        # Delete the files: the test overwrites them anyway, but it may fail if they are malformed.
+        for path in [file1, file2]:
+            if os.path.exists(path):
+                os.unlink(path)
+        try:
+            stdout, _ = self.run_binary(['rename_unlink_fchown', file1, file2])
+        finally:
+            for path in [file1, file2]:
+                if os.path.exists(path):
+                    os.unlink(path)
+        self.assertIn('TEST OK', stdout)
+
+    def test_034d_rename_unlink_fchown_tmpfs(self):
+        file1 = '/mnt/tmpfs/file1'
+        file2 = '/mnt/tmpfs/file2'
+        stdout, _ = self.run_binary(['rename_unlink_fchown', file1, file2])
         self.assertIn('TEST OK', stdout)
 
     def test_040_futex_bitset(self):
@@ -803,10 +852,10 @@ class TC_30_Syscall(RegressionTestCase):
     @unittest.skipUnless(HAS_SGX, 'Sealed (protected) files are only available with SGX')
     def test_053_mmap_file_backed_protected(self):
         # create the protected file
-        pf_path = 'encrypted_file_mrsigner.dat'
+        pf_path = 'tmp_enc/mrsigners/mmap_file_backed.dat'
         if os.path.exists(pf_path):
             os.remove(pf_path)
-        stdout, _ = self.run_binary(['sealed_file', pf_path])
+        stdout, _ = self.run_binary(['sealed_file', pf_path, 'nounlink'])
         self.assertIn('CREATION OK', stdout)
 
         try:
@@ -865,7 +914,6 @@ class TC_30_Syscall(RegressionTestCase):
         stdout, _ = self.run_binary(['munmap'])
         self.assertIn('TEST OK', stdout)
 
-    @unittest.skip('sigaltstack isn\'t correctly implemented')
     def test_060_sigaltstack(self):
         stdout, _ = self.run_binary(['sigaltstack'])
 
@@ -886,11 +934,29 @@ class TC_30_Syscall(RegressionTestCase):
 
     def test_070_eventfd(self):
         stdout, _ = self.run_binary(['eventfd'])
+        self.assertIn('TEST OK', stdout)
 
-        # Eventfd Test
-        self.assertIn('eventfd_using_poll completed successfully', stdout)
-        self.assertIn('eventfd_using_various_flags completed successfully', stdout)
-        self.assertIn('eventfd_using_fork completed successfully', stdout)
+    def test_071_eventfd_fork(self):
+        stdout, _ = self.run_binary(['eventfd_fork'])
+        self.assertIn('TEST OK', stdout)
+
+    def test_072_eventfd_read_then_write(self):
+        stdout, _ = self.run_binary(['eventfd_read_then_write'])
+        self.assertIn('TEST OK', stdout)
+
+    def test_073_eventfd_fork_allowed_failing(self):
+        try:
+            self.run_binary(['eventfd_fork_allowed_failing'])
+            self.fail('eventfd_fork_allowed_failing unexpectedly succeeded')
+        except subprocess.CalledProcessError as e:
+            stdout = e.stdout.decode()
+            stderr = e.stderr.decode()
+            self.assertIn('Child process tried to access eventfd created by parent process', stderr)
+            self.assertIn('eventfd write failed', stdout)
+
+    def test_074_eventfd_races(self):
+        stdout, _ = self.run_binary(['eventfd_races'])
+        self.assertIn('TEST OK', stdout)
 
     @unittest.skipIf(USES_MUSL, 'sched_setscheduler is not supported in musl')
     def test_080_sched(self):
@@ -991,6 +1057,10 @@ class TC_30_Syscall(RegressionTestCase):
             if os.path.exists('tmp/flock_file2'):
                 os.remove('tmp/flock_file2')
         self.assertIn('TEST OK', stdout)
+
+    def test_150_itimer(self):
+        stdout, _ = self.run_binary(['itimer'])
+        self.assertIn("TEST OK", stdout)
 
 class TC_31_Syscall(RegressionTestCase):
     def test_000_syscall_redirect(self):
@@ -1203,45 +1273,58 @@ class TC_40_FileSystem(RegressionTestCase):
 
     @unittest.skipUnless(HAS_SGX, 'Sealed (protected) files are only available with SGX')
     def test_050_sealed_file_mrenclave(self):
-        pf_path = 'encrypted_file_mrenclave.dat'
+        pf_path = 'tmp_enc/mrenclaves/test_050.dat'
         if os.path.exists(pf_path):
             os.remove(pf_path)
 
-        stdout, _ = self.run_binary(['sealed_file', pf_path])
+        stdout, _ = self.run_binary(['sealed_file', pf_path, 'nounlink'])
         self.assertIn('CREATION OK', stdout)
-        stdout, _ = self.run_binary(['sealed_file', pf_path])
+        stdout, _ = self.run_binary(['sealed_file', pf_path, 'nounlink'])
         self.assertIn('READING OK', stdout)
 
     @unittest.skipUnless(HAS_SGX, 'Sealed (protected) files are only available with SGX')
     def test_051_sealed_file_mrsigner(self):
-        pf_path = 'encrypted_file_mrsigner.dat'
+        pf_path = 'tmp_enc/mrsigners/test_051.dat'
         if os.path.exists(pf_path):
             os.remove(pf_path)
 
-        stdout, _ = self.run_binary(['sealed_file', pf_path])
+        stdout, _ = self.run_binary(['sealed_file', pf_path, 'nounlink'])
         self.assertIn('CREATION OK', stdout)
-        stdout, _ = self.run_binary(['sealed_file_mod', pf_path])
+        stdout, _ = self.run_binary(['sealed_file_mod', pf_path, 'nounlink'])
         self.assertIn('READING FROM MODIFIED ENCLAVE OK', stdout)
 
     @unittest.skipUnless(HAS_SGX, 'Sealed (protected) files are only available with SGX')
     def test_052_sealed_file_mrenclave_bad(self):
-        pf_path = 'encrypted_file_mrenclave.dat'
+        pf_path = 'tmp_enc/mrenclaves/test_052.dat'
         # Negative test: Seal MRENCLAVE-bound file in one enclave -> opening this file in
         # another enclave (with different MRENCLAVE) should fail
         if os.path.exists(pf_path):
             os.remove(pf_path)
 
-        stdout, _ = self.run_binary(['sealed_file', pf_path])
+        stdout, _ = self.run_binary(['sealed_file', pf_path, 'nounlink'])
         self.assertIn('CREATION OK', stdout)
 
         try:
-            self.run_binary(['sealed_file_mod', pf_path])
+            self.run_binary(['sealed_file_mod', pf_path, 'nounlink'])
             self.fail('expected to return nonzero')
         except subprocess.CalledProcessError as e:
             self.assertEqual(e.returncode, 1)
             stdout = e.stdout.decode()
             self.assertNotIn('READING FROM MODIFIED ENCLAVE OK', stdout)
             self.assertIn('Permission denied', stdout)
+
+    @unittest.skipUnless(HAS_SGX, 'Sealed (protected) files are only available with SGX')
+    def test_053_sealed_file_mrenclave_unlink(self):
+        pf_path = 'tmp_enc/mrenclaves/test_053.dat'
+        # Unlinking test: Seal MRENCLAVE-bound file in one enclave -> unlinking this file in
+        # another enclave (with different MRENCLAVE) should still work
+        if os.path.exists(pf_path):
+            os.remove(pf_path)
+
+        stdout, _ = self.run_binary(['sealed_file', pf_path, 'nounlink'])
+        self.assertIn('CREATION OK', stdout)
+        stdout, _ = self.run_binary(['sealed_file_mod', pf_path, 'unlink'])
+        self.assertIn('UNLINK OK', stdout)
 
     def test_060_synthetic(self):
         stdout, _ = self.run_binary(['synthetic'])
@@ -1252,6 +1335,10 @@ class TC_40_FileSystem(RegressionTestCase):
             os.remove('/dev/shm/shm_test')
         stdout, _ = self.run_binary(['shm'])
         self.assertIn("TEST OK", stdout)
+
+    def test_080_close_range(self):
+        stdout, _ = self.run_binary(['close_range'])
+        self.assertIn('TEST OK', stdout)
 
 class TC_50_GDB(RegressionTestCase):
     def setUp(self):
@@ -1320,6 +1407,28 @@ class TC_50_GDB(RegressionTestCase):
         xmm0_result = self.find('XMM0 result', stdout)
         self.assertEqual(xmm0_result, '$4 = 0x4000400040004000')
 
+    @unittest.skipUnless(HAS_SGX, 'Trusted files bug was SGX-specific')
+    def test_020_gdb_fork_and_access_file_bug(self):
+        # To run this test manually, use:
+        # GDB=1 GDB_SCRIPT=fork_and_access_file.gdb gramine-sgx fork_and_access_file
+        #
+        # This test checks that the bug of trusted files was fixed. The bug effectively degenerated
+        # opened trusted files to allowed files after fork. This test starts a program that forks
+        # and then reads the trusted file. The GDB script stops the program after fork, modifies the
+        # trusted file, and then lets the program continue execution. The child process must see the
+        # modified trusted file, and Gramine's verification logic must fail the whole program.
+        try:
+            stdout, _ = self.run_gdb(['fork_and_access_file'], 'fork_and_access_file.gdb')
+            self.assertIn('BREAK ON FORK', stdout)
+            self.assertIn('EXITING GDB WITH A GRAMINE ERROR', stdout)
+            # below message must NOT be printed; it means Gramine didn't fail but the program itself
+            self.assertNotIn('EXITING GDB WITHOUT A GRAMINE ERROR', stdout)
+            # below message from program must NOT be printed; Gramine must fail before it
+            self.assertNotIn('child read data different from what parent read', stdout)
+        finally:
+            # restore the trusted file contents (modified by the GDB script in this test)
+            with open('fork_and_access_file_testfile', 'w') as f:
+                f.write('fork_and_access_file_testfile')
 
 class TC_80_Socket(RegressionTestCase):
     def test_000_getsockopt(self):
@@ -1419,14 +1528,16 @@ class TC_80_Socket(RegressionTestCase):
         stdout, _ = self.run_binary(['tcp_einprogress', '127.0.0.1', 'epoll'])
         self.assertIn('TEST OK (connection refused after initial EINPROGRESS)', stdout)
 
-    # Two tests for an unresponsive peer: first connect() returns EINPROGRESS, then poll/epoll
-    # times out because the connection cannot be established
+    # Two tests for an unresponsive peer: first connect() returns EINPROGRESS, then poll/epoll times
+    # out because the connection cannot be established. Note that 203.0.113.1 address is taken from
+    # the reserved "Documentation" range 203.0.113.0/24 (TEST-NET-3), which should never be used in
+    # real networks.
     def test_307_socket_tcp_einprogress_unresponsive_poll(self):
-        stdout, _ = self.run_binary(['tcp_einprogress', '10.255.255.255', 'poll'])
+        stdout, _ = self.run_binary(['tcp_einprogress', '203.0.113.1', 'poll'])
         self.assertIn('TEST OK (connection timed out)', stdout)
 
     def test_308_socket_tcp_einprogress_unresponsive_epoll(self):
-        stdout, _ = self.run_binary(['tcp_einprogress', '10.255.255.255', 'epoll'])
+        stdout, _ = self.run_binary(['tcp_einprogress', '203.0.113.1', 'epoll'])
         self.assertIn('TEST OK (connection timed out)', stdout)
 
     def test_310_socket_tcp_ipv6_v6only(self):

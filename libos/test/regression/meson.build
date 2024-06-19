@@ -10,6 +10,7 @@ tests = {
     'bootstrap_static': {
         'static': true,
     },
+    'close_range': {},
     'console': {},
     'debug': {
         'c_args': '-g3',
@@ -20,6 +21,9 @@ tests = {
     'epoll_epollet': {},
     'epoll_test': {},
     'eventfd': {},
+    'eventfd_fork': {},
+    'eventfd_races': {},
+    'eventfd_read_then_write': {},
     'exec': {},
     'exec_fork': {},
     'exec_invalid_args': {},
@@ -36,6 +40,7 @@ tests = {
     'file_size': {},
     'flock_lock': {},
     'fopen_cornercases': {},
+    'fork_and_access_file': {},
     'fork_and_exec': {},
     'fp_multithread': {
         'c_args': '-fno-builtin',  # see comment in the test's source
@@ -57,6 +62,7 @@ tests = {
     'host_root_fs': {},
     'hostname': {},
     'init_fail': {},
+    'itimer': {},
     'keys': {},
     'kill_all': {},
     'large_dir_read': {},
@@ -93,6 +99,7 @@ tests = {
     'pthread_set_get_affinity': {},
     'readdir': {},
     'rename_unlink': {},
+    'rename_unlink_fchown': {},
     'run_test': {
         'include_directories': include_directories(
             # for `gramine_entry_api.h`
@@ -127,6 +134,7 @@ tests = {
     'sighandler_sigpipe': {},
     'signal_multithread': {},
     'sigprocmask_pending': {},
+    'sigterm_multithread': {},
     'socket_ioctl': {},
     'spinlock': {
         'include_directories': include_directories(

@@ -134,6 +134,14 @@ struct libos_epoll_handle {
     size_t last_returned_index;
 };
 
+struct libos_eventfd_handle {
+    bool broken_in_child;
+    bool is_semaphore;
+    spinlock_t lock; /* protects below fields */
+    uint64_t val;
+    uint64_t dummy_host_val;
+};
+
 struct libos_handle {
     enum libos_handle_type type;
     bool is_dir;
@@ -170,7 +178,12 @@ struct libos_handle {
      */
     struct libos_inode* inode;
 
-    /* Offset in file. Protected by `pos_lock`. */
+    /* Whether the handle is seekable (based on `type`). This field does not change, so reading it
+     * does not require holding any locks. Affects the `pos` field, see below. */
+    bool seekable;
+
+    /* Offset in file. Protected by `pos_lock`. Only meaningful for `seekable` handles; always zero
+     * for non-seekable handles. */
     file_off_t pos;
 
     /* This list contains `libos_epoll_item` objects this handle is part of. All accesses should be
@@ -203,7 +216,7 @@ struct libos_handle {
         struct libos_sock_handle sock;           /* TYPE_SOCK */
 
         struct libos_epoll_handle epoll;         /* TYPE_EPOLL */
-        struct { bool is_semaphore; } eventfd;   /* TYPE_EVENTFD */
+        struct libos_eventfd_handle eventfd;     /* TYPE_EVENTFD */
     } info;
 
     struct libos_dir_handle dir_info;
@@ -217,7 +230,9 @@ struct libos_handle {
 
     /* Lock for handle position (`pos`). Intended for operations that change the position (e.g.
      * `read`, `seek` but not `pread`). This lock should be taken *before* `libos_handle.lock` and
-     * `libos_inode.lock`. */
+     * `libos_inode.lock`. Must be used *only* via maybe_lock_pos_handle() and
+     * maybe_unlock_pos_handle(); these functions make sure that the lock is acquired only on those
+     * handle types that are seekable (e.g. not on eventfds or pipes). */
     struct libos_lock pos_lock;
 };
 
@@ -275,6 +290,7 @@ int set_new_fd_handle_above_fd(uint32_t fd, struct libos_handle* hdl, int fd_fla
 struct libos_handle* detach_fd_handle(uint32_t fd, int* flags, struct libos_handle_map* map);
 void detach_all_fds(void);
 void close_cloexec_handles(struct libos_handle_map* map);
+void close_handle_range(uint32_t first, uint32_t last, bool cloexec);
 
 /* manage handle mapping */
 int dup_handle_map(struct libos_handle_map** new_map, struct libos_handle_map* old_map);
@@ -291,3 +307,6 @@ int get_file_size(struct libos_handle* file, uint64_t* size);
 
 ssize_t do_handle_read(struct libos_handle* hdl, void* buf, size_t count);
 ssize_t do_handle_write(struct libos_handle* hdl, const void* buf, size_t count);
+
+void maybe_lock_pos_handle(struct libos_handle* hdl);
+void maybe_unlock_pos_handle(struct libos_handle* hdl);

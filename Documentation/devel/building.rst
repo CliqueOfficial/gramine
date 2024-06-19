@@ -38,7 +38,7 @@ Run the following command on Ubuntu LTS to install dependencies::
 
     sudo apt-get install -y build-essential \
         autoconf bison gawk nasm ninja-build pkg-config python3 python3-click \
-        python3-jinja2 python3-pip python3-pyelftools wget
+        python3-jinja2 python3-pip python3-pyelftools python3-voluptuous wget
     sudo python3 -m pip install 'meson>=0.56' 'tomli>=1.1.0' 'tomli-w>=0.4.0'
 
 You can also install Meson, python3-tomli and python3-tomli-w from apt instead
@@ -68,6 +68,10 @@ to older kernels in certain distros).
 Kernel version can be checked using the following command::
 
        uname -r
+
+If your current kernel version is 5.11 or higher, you have a built-in SGX
+support. The driver is accessible through /dev/sgx_enclave
+and /dev/sgx_provision.
 
 If your current kernel version is lower than 5.11, then you have two options:
 

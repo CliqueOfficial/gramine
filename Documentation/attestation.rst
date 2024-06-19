@@ -111,6 +111,7 @@ local machine (preliminary step 0). When the SGX quote arrives, the user
 compares the certificates embedded in the quote against these cached
 certificates (step 9).
 
+.. _low-level-dev-attestation-interface:
 
 Low-level ``/dev/attestation`` interface
 ----------------------------------------
@@ -313,10 +314,8 @@ SGX measurements:
 - ``RA_TLS_ISV_SVN`` -- verify that the attesting enclave has this or higher
   ``ISV_SVN``. This is a decimal string.
 
-For each of these settings, you may specify the special value ``any`` to skip
-verifying a particular measurement. This used to be the default, which would
-be used if a particular environment variable wasn't present. This behavior
-has been deprecated and will become a hard error in the future.
+Each of these variables has to be explicitly set, but you may specify the
+special value ``any`` to skip verifying a particular measurement.
 
 The four SGX measurements above may be also verified via a user-specified
 callback with the signature ``int (*callback)(char* mrenclave, char* mrsigner,
@@ -613,7 +612,7 @@ variables and files with these secrets, and only then starts the main Gramine
 application. This "premain" executable together with the Gramine application is
 referred to as a Marble. For more details, see `Marblerun docs on Gramine
 integration
-<https://docs.edgeless.systems/marblerun/#/building-services/gramine>`__.
+<https://docs.edgeless.systems/marblerun/building-marbles/gramine>`__.
 
 The Coordinator serves as a centralized service for remote attestation of
 Marbles and provisioning of secrets to them. The Coordinator verifies the

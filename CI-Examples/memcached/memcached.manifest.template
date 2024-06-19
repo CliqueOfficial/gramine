@@ -3,7 +3,6 @@
 
 # Memcached manifest file example
 
-loader.entrypoint = "file:{{ gramine.libos }}"
 libos.entrypoint = "/memcached"
 
 loader.log_level = "{{ log_level }}"
@@ -17,10 +16,6 @@ loader.env.LD_LIBRARY_PATH = "/lib:/usr/{{ arch_libdir }}"
 # consequent Memcached execution anyway.
 loader.uid = 1000
 loader.gid = 1000
-
-# Memcached requires `eventfd` for worker thread notifications, starting from v1.6.11. If you have a
-# Memcached version older than that, we recommend to remove this insecure manifest option.
-sys.insecure__allow_eventfd = true
 
 sys.enable_sigterm_injection = true
 
@@ -44,5 +39,4 @@ sgx.trusted_files = [
   "file:memcached",
   "file:{{ gramine.runtimedir() }}/",
   "file:/usr/{{ arch_libdir }}/",
-  "file:{{ gramine.libos }}",
 ]

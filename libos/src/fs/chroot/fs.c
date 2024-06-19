@@ -44,76 +44,6 @@ static int chroot_mount(struct libos_mount_params* params, void** mount_data) {
     return 0;
 }
 
-static const char* strip_prefix(const char* uri) {
-    const char* s = strchr(uri, ':');
-    assert(s);
-    return s + 1;
-}
-
-int chroot_dentry_uri(struct libos_dentry* dent, mode_t type, char** out_uri) {
-    assert(dent->mount);
-    assert(dent->mount->uri);
-
-    int ret;
-
-    const char* root = strip_prefix(dent->mount->uri);
-
-    const char* prefix;
-    size_t prefix_len;
-    switch (type) {
-        case S_IFREG:
-            prefix = URI_PREFIX_FILE;
-            prefix_len = static_strlen(URI_PREFIX_FILE);
-            break;
-        case S_IFDIR:
-            prefix = URI_PREFIX_DIR;
-            prefix_len = static_strlen(URI_PREFIX_DIR);
-            break;
-        case S_IFCHR:
-            prefix = URI_PREFIX_DEV;
-            prefix_len = static_strlen(URI_PREFIX_DEV);
-            break;
-        default:
-            BUG();
-    }
-
-    char* rel_path;
-    size_t rel_path_size;
-    ret = dentry_rel_path(dent, &rel_path, &rel_path_size);
-    if (ret < 0)
-        return ret;
-
-    /* Treat empty path as "." */
-    if (*root == '\0')
-        root = ".";
-
-    size_t root_len = strlen(root);
-
-    /* Allocate buffer for "<prefix:><root>/<rel_path>" (if `rel_path` is empty, we don't need the
-     * space for `/`, but overallocating 1 byte doesn't hurt us, and keeps the code simple) */
-    char* uri = malloc(prefix_len + root_len + 1 + rel_path_size);
-    if (!uri) {
-        ret = -ENOMEM;
-        goto out;
-    }
-    memcpy(uri, prefix, prefix_len);
-    memcpy(uri + prefix_len, root, root_len);
-    if (rel_path_size == 1) {
-        /* this is the mount root, the URI is "<prefix:><root>"*/
-        uri[prefix_len + root_len] = '\0';
-    } else {
-        /* this is not the mount root, the URI is "<prefix:><root>/<rel_path>" */
-        uri[prefix_len + root_len] = '/';
-        memcpy(uri + prefix_len + root_len + 1, rel_path, rel_path_size);
-    }
-    *out_uri = uri;
-    ret = 0;
-
-out:
-    free(rel_path);
-    return ret;
-}
-
 static int chroot_setup_dentry(struct libos_dentry* dent, mode_t type, mode_t perm,
                                file_off_t size) {
     assert(locked(&g_dcache_lock));
@@ -138,7 +68,7 @@ static int chroot_lookup(struct libos_dentry* dent) {
      * and report the right file type.
      */
     char* uri = NULL;
-    ret = chroot_dentry_uri(dent, S_IFREG, &uri);
+    ret = dentry_uri(dent, S_IFREG, &uri);
     if (ret < 0)
         goto out;
 
@@ -182,9 +112,9 @@ out:
 }
 
 /* Open a temporary read-only PAL handle for a file (used by `unlink` etc.) */
-static int chroot_temp_open(struct libos_dentry* dent, mode_t type, PAL_HANDLE* out_palhdl) {
+static int chroot_temp_open(struct libos_dentry* dent, PAL_HANDLE* out_palhdl) {
     char* uri;
-    int ret = chroot_dentry_uri(dent, type, &uri);
+    int ret = dentry_uri(dent, dent->inode->type, &uri);
     if (ret < 0)
         return ret;
 
@@ -202,7 +132,7 @@ static int chroot_do_open(struct libos_handle* hdl, struct libos_dentry* dent, m
     int ret;
 
     char* uri;
-    ret = chroot_dentry_uri(dent, type, &uri);
+    ret = dentry_uri(dent, type, &uri);
     if (ret < 0)
         return ret;
 
@@ -222,6 +152,7 @@ static int chroot_do_open(struct libos_handle* hdl, struct libos_dentry* dent, m
         uri = NULL;
 
         hdl->type = TYPE_CHROOT;
+        hdl->seekable = true;
         hdl->pos = 0;
         hdl->pal_handle = palhdl;
     } else {
@@ -347,7 +278,8 @@ int chroot_readdir(struct libos_dentry* dent, readdir_callback_t callback, void*
     char* buf = NULL;
     size_t buf_size = READDIR_BUF_SIZE;
 
-    ret = chroot_temp_open(dent, S_IFDIR, &palhdl);
+    assert(dent->inode->type == S_IFDIR);
+    ret = chroot_temp_open(dent, &palhdl);
     if (ret < 0)
         return ret;
 
@@ -408,7 +340,7 @@ int chroot_unlink(struct libos_dentry* dent) {
     int ret;
 
     PAL_HANDLE palhdl;
-    ret = chroot_temp_open(dent, dent->inode->type, &palhdl);
+    ret = chroot_temp_open(dent, &palhdl);
     if (ret < 0)
         return ret;
 
@@ -427,12 +359,12 @@ static int chroot_rename(struct libos_dentry* old, struct libos_dentry* new) {
     int ret;
     char* new_uri = NULL;
 
-    ret = chroot_dentry_uri(new, old->inode->type, &new_uri);
+    ret = dentry_uri(new, old->inode->type, &new_uri);
     if (ret < 0)
         goto out;
 
     PAL_HANDLE palhdl;
-    ret = chroot_temp_open(old, old->inode->type, &palhdl);
+    ret = chroot_temp_open(old, &palhdl);
     if (ret < 0)
         goto out;
 
@@ -456,7 +388,7 @@ static int chroot_chmod(struct libos_dentry* dent, mode_t perm) {
     int ret;
 
     PAL_HANDLE palhdl;
-    ret = chroot_temp_open(dent, dent->inode->type, &palhdl);
+    ret = chroot_temp_open(dent, &palhdl);
     if (ret < 0)
         return ret;
 

@@ -57,7 +57,7 @@ static int shm_do_open(struct libos_handle* hdl, struct libos_dentry* dent, mode
     assert(locked(&g_dcache_lock));
 
     char* uri;
-    int ret = chroot_dentry_uri(dent, type, &uri);
+    int ret = dentry_uri(dent, type, &uri);
     if (ret < 0)
         return ret;
 
@@ -76,6 +76,9 @@ static int shm_do_open(struct libos_handle* hdl, struct libos_dentry* dent, mode
     uri = NULL;
 
     hdl->type = TYPE_SHM;
+    hdl->seekable = true;
+    hdl->pos = 0;
+
     hdl->pal_handle = palhdl;
     ret = 0;
 
@@ -106,7 +109,7 @@ static int shm_lookup(struct libos_dentry* dent) {
      * However, "file:" prefix is good enough here: `PalStreamAttributesQuery` will access the file
      * and report the right file type.
      */
-    int ret = chroot_dentry_uri(dent, S_IFREG, &uri);
+    int ret = dentry_uri(dent, S_IFREG, &uri);
     if (ret < 0)
         goto out;
 

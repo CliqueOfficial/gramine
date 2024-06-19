@@ -42,9 +42,7 @@ Installing prerequisites
 ------------------------
 
 Change directory to ``Documentation``, install prerequisites including Doxygen,
-Breathe and Sphinx. Gramine documentation requires version 1.8 of Sphinx. The
-documentation is built with python3; if you have similar packages in python2, it
-may create problems; we recommend removing any similar packages in python2.
+Breathe and Sphinx. Gramine documentation requires version 3.4 of Sphinx.
 
 .. code-block:: sh
 
@@ -131,15 +129,10 @@ Preferred reST style
 
       This is a |~| function.
 
-  This substitution is added to all documents processed by Sphinx. For files
-  processed also by other software (like ``README.rst``, which is both rendered
-  by GitHub and included in ``index.rst``), use ``|nbsp|`` after adding this
-  substitution yourself::
-
-      .. |nbsp| unicode:: 0xa0
-         :trim:
-
-      This is a |nbsp| README.
+  This substitution is added to all documents processed by Sphinx. Don't use
+  this for files processed also by other software (like ``README.rst``, which
+  is both rendered by GitHub and included in ``index.rst``) - GitHub renders
+  those spaces incorrectly.
 
 Documentation of the code should be organized into files by logical concepts,
 as they fit into programmer's mind. Ideally, this should match the source files,

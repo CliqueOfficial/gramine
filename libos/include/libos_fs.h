@@ -182,6 +182,10 @@ struct libos_fs_ops {
     /* Poll a single handle. Must not block. */
     int (*poll)(struct libos_handle* hdl, int in_events, int* out_events);
 
+    /* Verify a single handle after poll. Must update `pal_ret_events` in-place with only allowed
+     * ones. Used in e.g. secure eventfd FS to verify if the host is not lying to us. */
+    void (*post_poll)(struct libos_handle* hdl, pal_wait_flags_t* pal_ret_events);
+
     /* checkpoint/migrate the file system */
     ssize_t (*checkpoint)(void** checkpoint, void* mount_data);
     int (*migrate)(void* checkpoint, void** mount_data);
@@ -504,10 +508,10 @@ struct libos_mount {
 
 extern struct libos_dentry* g_dentry_root;
 
-#define F_OK 0
-#define R_OK        001
-#define W_OK        002
-#define X_OK        004
+#define F_OK   0
+#define X_OK 001
+#define W_OK 002
+#define R_OK 004
 #define MAY_EXEC  001
 #define MAY_WRITE 002
 #define MAY_READ  004
@@ -833,6 +837,14 @@ int dentry_abs_path(struct libos_dentry* dent, char** path, size_t* size);
  */
 int dentry_rel_path(struct libos_dentry* dent, char** path, size_t* size);
 
+/*
+ * Calculate the URI for a dentry. The URI scheme is determined by file type (`type` field). It
+ * needs to be passed separately (instead of using `dent->inode->type`) because the dentry might not
+ * have inode associated yet: we might be creating a new file, or looking up a file we don't know
+ * yet.
+ */
+int dentry_uri(struct libos_dentry* dent, mode_t type, char** out_uri);
+
 ino_t dentry_ino(struct libos_dentry* dent);
 
 /*!
@@ -964,14 +976,6 @@ int generic_truncate(struct libos_handle* hdl, file_off_t size);
 int synthetic_setup_dentry(struct libos_dentry* dent, mode_t type, mode_t perm);
 
 int fifo_setup_dentry(struct libos_dentry* dent, mode_t perm, int fd_read, int fd_write);
-
-/*
- * Calculate the URI for a dentry. The URI scheme is determined by file type (`type` field). It
- * needs to be passed separately (instead of using `dent->inode->type`) because the dentry might not
- * have inode associated yet: we might be creating a new file, or looking up a file we don't know
- * yet.
- */
-int chroot_dentry_uri(struct libos_dentry* dent, mode_t type, char** out_uri);
 
 int chroot_readdir(struct libos_dentry* dent, readdir_callback_t callback, void* arg);
 int chroot_unlink(struct libos_dentry* dent);

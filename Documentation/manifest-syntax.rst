@@ -70,16 +70,20 @@ Loader entrypoint
 ::
 
    loader.entrypoint = "[URI]"
+   (Default: "<path to libsysdb.so>")
 
 This specifies the LibOS component that Gramine will load and run before loading
-the first executable of the user application. Currently, there is only one LibOS
-implementation: ``libsysdb.so``.
+the first executable of the user application. **Note**: currently, there is only
+one LibOS implementation: ``libsysdb.so``, and there is no need to specify this
+option explicitly.
 
 Note that the loader (the PAL binary) loads the LibOS binary specified in
 ``loader.entrypoint`` and passes control to this binary. Next, the LibOS binary
 loads the actual executable (the user application) specified in
 ``libos.entrypoint``. Also note that, in contrast to ``libos.entrypoint``, the
 ``loader.entrypoint`` option specifies a PAL URI (with the ``file:`` prefix).
+
+.. _libos-entrypoint:
 
 LibOS Entrypoint
 ^^^^^^^^^^^^^^^^
@@ -150,6 +154,8 @@ source.
    Pointing to an encrypted file is currently not supported, due to the fact
    that encryption key provisioning currently happens after setting up
    arguments.
+
+.. _domain-names-configuration:
 
 Domain names configuration
 ^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -247,6 +253,8 @@ are "consumed" by ``insecure__use_host_env``).
    because it's inherently insecure (doesn't provide any real security).
    Gramine loudly fails if ``passthrough = false`` manifest options are set.
 
+.. _user-id-and-group-id:
+
 User ID and Group ID
 ^^^^^^^^^^^^^^^^^^^^
 
@@ -289,6 +297,8 @@ may improve performance for certain workloads but may also generate
 ``SIGSEGV/SIGBUS`` exceptions for some applications that specifically use
 invalid pointers (though this is not expected for most real-world applications).
 
+.. _stack-size:
+
 Stack size
 ^^^^^^^^^^
 
@@ -317,17 +327,32 @@ Units like ``K`` (KiB), ``M`` (MiB), and ``G`` (GiB) can be appended to the
 values for convenience. For example, ``sys.brk.max_size = "1M"`` indicates
 a 1 |~| MiB brk size.
 
-Allowing eventfd
-^^^^^^^^^^^^^^^^
+.. _allowing-eventfd:
+
+Allowing host-based insecure eventfd
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 ::
 
     sys.insecure__allow_eventfd = [true|false]
     (Default: false)
 
-This specifies whether to allow system calls `eventfd()` and `eventfd2()`. Since
-eventfd emulation currently relies on the host, these system calls are
-disallowed by default due to security concerns.
+By default, Gramine implements eventfd in a secure but restricted way: currently
+this secure implementation only works when eventfd usage is confined to a single
+process (note that application may still be multi-process and spawn child
+processes, but eventfds created in parent will be invalid in children).
+
+However, sometimes it is acceptable for applications to use host-based insecure
+eventfd implementation. This implementation works without the above-mentioned
+restriction in multi-process applications. Use ``sys.insecure__allow_eventfd``
+manifest syntax to switch to this insecure implementation.
+
+.. note ::
+   ``sys.insecure__allow_eventfd`` is pass-through and thus potentially insecure
+   in e.g. SGX environments. It is the responsibility of the app developer to
+   analyze the app usage of eventfd, with security implications in mind.
+
+.. _external-sigterm-injection:
 
 External SIGTERM injection
 ^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -342,6 +367,8 @@ into Gramine. Could be useful to handle graceful shutdown.
 Be careful! In SGX environment, the untrusted host could inject that signal in
 an arbitrary moment. Examine what your application's `SIGTERM` handler does and
 whether it poses any security threat.
+
+.. _disallowing-subprocesses-fork:
 
 Disallowing subprocesses (fork)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -375,6 +402,8 @@ Root FS mount point
 This syntax specifies the root filesystem to be mounted inside the library OS.
 Both parameters are optional. If not specified, then Gramine mounts the current
 working directory as the root.
+
+.. _fs-mount-points:
 
 FS mount points
 ^^^^^^^^^^^^^^^
@@ -437,9 +466,8 @@ Gramine currently supports the following types of mount points:
 
   ``tmpfs`` is especially useful in trusted environments (like Intel SGX) for
   securely storing temporary files. This concept is similar to Linux's tmpfs.
-  Files under ``tmpfs`` mount points currently do *not* support mmap and each
-  process has its own, non-shared tmpfs (i.e., processes don't see each other's
-  files).
+  Currently there is a limitation that each process has its own, non-shared
+  tmpfs (i.e., processes don't see each other's files).
 
 Start (current working) directory
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -450,6 +478,8 @@ Start (current working) directory
 
 This syntax specifies the start (current working) directory. If not specified,
 then Gramine sets the root directory as the start directory (see ``fs.root``).
+
+.. _allowed-ioctls:
 
 Allowed IOCTLs
 ^^^^^^^^^^^^^^
@@ -604,6 +634,8 @@ all), then the ``struct`` key must be an empty string or not exist at all::
    security implications in mind. In most cases, IOCTL arguments should be
    encrypted or integrity-protected with a key pre-shared between Gramine and
    the device.
+
+.. _experimental-flock-bsd-style-locks-support:
 
 Experimental flock (BSD-style locks) support
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -797,11 +829,29 @@ SGX EXINFO
     sgx.use_exinfo = [true|false]
     (Default: false)
 
+    sgx.insecure__allow_memfaults_without_exinfo = [true|false]
+    (Default: false)
+
 If ``sgx.use_exinfo`` is set, user application can retrieve faulting address in
-signal handler in case of a page fault. Otherwise (set to ``false``), the
-faulting address will always be provided as ``0``. The default is ``false``
-because some frameworks/runtimes could otherwise print the callstack and
-variables/registers on exceptions, potentially leaking data.
+signal handler in case of page/general protection faults (#PF and #GP).
+Otherwise (set to ``false``), the behavior depends on
+``sgx.insecure__allow_memfaults_without_exinfo``:
+
+- If ``sgx.insecure__allow_memfaults_without_exinfo`` is unset (default), then
+  Gramine terminates with an error, to prevent a possible attack.
+- Otherwise the exception is allowed and Gramine forwards it to the application,
+  and the faulting address is provided as ``0``.
+
+The default value for ``sgx.use_exinfo`` is ``false`` because some
+frameworks/runtimes could otherwise print the callstack and variables/registers
+on exceptions, potentially leaking data.
+
+.. note::
+   The option ``sgx.insecure__allow_memfaults_without_exinfo`` is provided only
+   to allow debugging/testing on old CPUs that do not support the EXINFO
+   feature. Without EXINFO support, a malicious host may attack the application
+   by injecting a memory fault. This option is thus insecure and must not be
+   used in production environments! It will be removed in near future.
 
 Optional CPU features (AVX, AVX512, AMX, MPX, PKRU)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -1006,11 +1056,14 @@ Gramine:
 
 * ``"_sgx_mrenclave"`` (SGX only) is the SGX sealing key based on the MRENCLAVE
   identity of the enclave. This is useful to allow only the same enclave (on the
-  same platform) to unseal files.
+  same platform) to unseal files, i.e., this key is not accessible to any other
+  software other than the specific enclave on the specific platform.
 
 * ``"_sgx_mrsigner"`` (SGX only) is the SGX sealing key based on the MRSIGNER
   identity of the enclave. This is useful to allow all enclaves signed with the
-  same key (and on the same platform) to unseal files.
+  same key (and on the same platform) to unseal files, i.e., this key is not
+  accessible to any other software other than the specific set of same-MRSIGNER
+  enclaves on the specific platform.
 
 .. warning::
    The same key must not be used for the encrypted-files mount and for the
@@ -1254,47 +1307,3 @@ In addition, the application manifest must also contain ``sgx.debug = true``.
    independently.
 
 See :ref:`vtune-sgx-profiling` for more information.
-
-Deprecated options
-------------------
-
-Optional CPU features (deprecated syntax)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-::
-
-    sgx.require_avx    = [true|false]
-    sgx.require_avx512 = [true|false]
-    sgx.require_mpx    = [true|false]
-    sgx.require_pkru   = [true|false]
-    sgx.require_amx    = [true|false]
-
-This syntax specified whether to require certain CPU features to be available on
-the platform where the enclave executes. This syntax has been replaced with
-``sgx.cpu_features.[avx|avx512|mpx|pkru|amx]``.
-
-Previously, the default value for these features was ``false``. This was
-ambiguous because e.g. ``sgx.require_avx = false`` meant that the AVX feature
-was auto-detected on the platform, whereas ``sgx.require_mpx = false`` meant
-that the MPX feature was always disabled inside the enclave.
-
-.. note ::
-   Previously, security-hardening features (MPX and PKRU) were underspecified.
-   For example, ``sgx.require_mpx = false`` meant that the MPX feature was
-   always disabled inside the enclave (regardless of whether the CPU supported
-   it or not), and ``sgx.require_mpx = true`` meant that the MPX feature was
-   always enabled inside the enclave (even if the CPU did not support it, which
-   would result in enclave failures). This is in contrast to
-   non-security-hardening features (AVX, AVX512, AMX) which could be
-   "unspecified". The new manifest syntax fixes this ambiguity.
-
-SGX EXINFO (deprecated syntax)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-::
-
-    sgx.require_exinfo = [true|false]
-
-This syntax specified whether a user application can retrieve faulting address
-in signal handler in case of a page fault. This syntax was renamed to
-``sgx.use_exinfo``. The default value was ``false``.

@@ -222,7 +222,7 @@ long libos_syscall_fchmod(int fd, mode_t mode) {
     /* This isn't documented, but that's what Linux does. */
     mode_t perm = mode & 07777;
 
-    int ret = 0;
+    int ret;
     if (!hdl->inode) {
         ret = -ENOENT;
         goto out;
@@ -239,6 +239,7 @@ long libos_syscall_fchmod(int fd, mode_t mode) {
     hdl->inode->perm = perm;
     unlock(&hdl->inode->lock);
 
+    ret = 0;
 out:
     put_handle(hdl);
     return ret;
@@ -250,8 +251,6 @@ long libos_syscall_chown(const char* path, uid_t uid, gid_t gid) {
 
 long libos_syscall_fchownat(int dfd, const char* filename, uid_t uid, gid_t gid, int flags) {
     __UNUSED(flags);
-    __UNUSED(uid);
-    __UNUSED(gid);
 
     if (!is_user_string_readable(filename))
         return -EFAULT;
@@ -282,30 +281,23 @@ out:
 }
 
 long libos_syscall_fchown(int fd, uid_t uid, gid_t gid) {
-    __UNUSED(uid);
-    __UNUSED(gid);
-
     struct libos_handle* hdl = get_fd_handle(fd, NULL, NULL);
     if (!hdl)
         return -EBADF;
 
     int ret;
-    struct libos_dentry* dent = hdl->dentry;
-
-    lock(&g_dcache_lock);
-    if (!dent || !dent->inode) {
+    if (!hdl->inode) {
         ret = -ENOENT;
         goto out;
     }
 
-    lock(&dent->inode->lock);
-    dent->inode->uid = (uid == (uid_t)-1) ? dent->inode->uid : uid;
-    dent->inode->gid = (gid == (gid_t)-1) ? dent->inode->gid : gid;
-    unlock(&dent->inode->lock);
+    lock(&hdl->inode->lock);
+    hdl->inode->uid = (uid == (uid_t)-1) ? hdl->inode->uid : uid;
+    hdl->inode->gid = (gid == (gid_t)-1) ? hdl->inode->gid : gid;
+    unlock(&hdl->inode->lock);
 
     ret = 0;
 out:
-    unlock(&g_dcache_lock);
     put_handle(hdl);
     return ret;
 }
@@ -481,7 +473,8 @@ long libos_syscall_sendfile(int out_fd, int in_fd, off_t* offset, size_t count) 
      * If `offset` is not NULL, we use `*offset` as starting offset for reading, and update
      * `*offset` afterwards (and keep the offset in input handle unchanged).
      *
-     * If `offset` is NULL, we use the offset in input handle, and update it afterwards.
+     * If `offset` is NULL, we use the offset in input handle, and update it afterwards (only if the
+     * input handle is seekable).
      */
     file_off_t pos_in = 0;
     if (offset) {
@@ -495,9 +488,9 @@ long libos_syscall_sendfile(int out_fd, int in_fd, off_t* offset, size_t count) 
             goto out;
         }
     } else {
-        lock(&in_hdl->pos_lock);
+        maybe_lock_pos_handle(in_hdl);
         pos_in = in_hdl->pos;
-        unlock(&in_hdl->pos_lock);
+        maybe_unlock_pos_handle(in_hdl);
     }
 
     if (!(out_hdl->acc_mode & MAY_WRITE)) {
@@ -523,9 +516,9 @@ long libos_syscall_sendfile(int out_fd, int in_fd, off_t* offset, size_t count) 
             break;
         }
 
-        lock(&out_hdl->pos_lock);
+        maybe_lock_pos_handle(out_hdl);
         ssize_t y = out_hdl->fs->fs_ops->write(out_hdl, buf, x, &out_hdl->pos);
-        unlock(&out_hdl->pos_lock);
+        maybe_unlock_pos_handle(out_hdl);
         if (y < 0) {
             ret = y;
             goto out_update;
@@ -550,10 +543,10 @@ out_update:
      * declaration). Note that we do it even if one of the read/write operations failed. */
     if (offset) {
         *offset = pos_in;
-    } else {
-        lock(&in_hdl->pos_lock);
+    } else if (in_hdl->seekable) {
+        maybe_lock_pos_handle(in_hdl);
         in_hdl->pos = pos_in;
-        unlock(&in_hdl->pos_lock);
+        maybe_unlock_pos_handle(in_hdl);
     }
 
 out:
