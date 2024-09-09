@@ -146,10 +146,33 @@ int init_handle(void) {
     if (!create_lock(&handle_mgr_lock)) {
         return -ENOMEM;
     }
+
     handle_mgr = create_mem_mgr(init_align_up(HANDLE_MGR_ALLOC));
     if (!handle_mgr) {
         return -ENOMEM;
     }
+
+    /* after fork, in the new child process, `libos_init` is run, hence this function too - but
+     * forked process will get its RLIMIT_NOFILE from the checkpoint */
+    assert(g_pal_public_state);
+    if (g_pal_public_state->parent_process)
+        return 0;
+
+    assert(g_manifest_root);
+    int64_t fds_limit_init64;
+    int ret = toml_int_in(g_manifest_root, "sys.fds.limit",
+                          /*defaultval=*/get_rlimit_cur(RLIMIT_NOFILE),
+                          &fds_limit_init64);
+    if (ret < 0) {
+        log_error("Cannot parse 'sys.fds.limit'");
+        return -EINVAL;
+    }
+    if (fds_limit_init64 < 0) {
+        log_error("'sys.fds.limit' is negative (%ld)", fds_limit_init64);
+        return -EINVAL;
+    }
+    set_rlimit_cur(RLIMIT_NOFILE, (uint64_t)fds_limit_init64);
+
     return 0;
 }
 
@@ -476,16 +499,6 @@ int set_new_fd_handle_above_fd(uint32_t fd, struct libos_handle* hdl, int fd_fla
     return __set_new_fd_handle(fd, hdl, fd_flags, handle_map, /*find_first=*/true);
 }
 
-static inline __attribute__((unused)) const char* __handle_name(struct libos_handle* hdl) {
-    if (hdl->uri)
-        return hdl->uri;
-    if (hdl->dentry && hdl->dentry->name[0] != '\0')
-        return hdl->dentry->name;
-    if (hdl->fs)
-        return hdl->fs->name;
-    return "(unknown)";
-}
-
 void get_handle(struct libos_handle* hdl) {
     refcount_inc(&hdl->ref_count);
 }
@@ -546,27 +559,6 @@ void put_handle(struct libos_handle* hdl) {
 
         destroy_handle(hdl);
     }
-}
-
-int get_file_size(struct libos_handle* hdl, uint64_t* size) {
-    if (!hdl->fs || !hdl->fs->fs_ops)
-        return -EINVAL;
-
-    if (hdl->fs->fs_ops->hstat) {
-        struct stat stat;
-        int ret = hdl->fs->fs_ops->hstat(hdl, &stat);
-        if (ret < 0) {
-            return ret;
-        }
-        if (stat.st_size < 0) {
-            return -EINVAL;
-        }
-        *size = (uint64_t)stat.st_size;
-        return 0;
-    }
-
-    *size = 0;
-    return 0;
 }
 
 static struct libos_handle_map* get_new_handle_map(uint32_t size) {

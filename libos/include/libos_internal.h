@@ -30,6 +30,8 @@ extern struct pal_public_state* g_pal_public_state;
 void libos_log(int level, const char* file, const char* func, uint64_t line,
                const char* fmt, ...) __attribute__((format(printf, 5, 6)));
 
+int print_warnings_on_insecure_configs(bool is_initial_process);
+
 /*!
  * \brief High-level syscall emulation entrypoint.
  *
@@ -144,10 +146,8 @@ bool handle_signal(PAL_CONTEXT* context);
 
 /*!
  * \brief Translate PAL error code into UNIX error code.
- *
- * The sign of the error code is preserved.
  */
-long pal_to_unix_errno(long err);
+int pal_to_unix_errno(long err);
 
 int set_hostname(const char* name, size_t len);
 
@@ -155,8 +155,11 @@ extern bool g_eventfd_passthrough_mode;
 int init_eventfd_mode(void);
 
 void warn_unsupported_syscall(unsigned long sysno);
+void trace_mock_syscall(unsigned long sysno);
 void debug_print_syscall_before(unsigned long sysno, ...);
 void debug_print_syscall_after(unsigned long sysno, ...);
+int get_syscall_number(const char* name, unsigned long* out_sysno);
+int init_syscalls(void);
 
 #ifndef __alloca
 #define __alloca __builtin_alloca

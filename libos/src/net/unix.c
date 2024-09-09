@@ -149,7 +149,7 @@ static int bind(struct libos_handle* handle, void* addr, size_t addrlen) {
     ret = PalStreamOpen(pipe_name, PAL_ACCESS_RDWR, /*share_flags=*/0, PAL_CREATE_IGNORED, options,
                         &pal_handle);
     if (ret < 0) {
-        return (ret == -PAL_ERROR_STREAMEXIST) ? -EADDRINUSE : pal_to_unix_errno(ret);
+        return (ret == PAL_ERROR_STREAMEXIST) ? -EADDRINUSE : pal_to_unix_errno(ret);
     }
 
     __atomic_store_n(&handle->info.sock.pal_handle, pal_handle, __ATOMIC_RELEASE);
@@ -246,7 +246,7 @@ static int connect(struct libos_handle* handle, void* addr, size_t addrlen, bool
     ret = PalStreamOpen(pipe_name, PAL_ACCESS_RDWR, /*share_flags=*/0, PAL_CREATE_IGNORED, options,
                         &pal_handle);
     if (ret < 0) {
-        return (ret == -PAL_ERROR_CONNFAILED) ? -ENOENT : pal_to_unix_errno(ret);
+        return (ret == PAL_ERROR_CONNFAILED) ? -ENOENT : pal_to_unix_errno(ret);
     }
 
     assert(sock->pal_handle == NULL);
@@ -319,8 +319,7 @@ static int getsockopt(struct libos_handle* handle, int level, int optname, void*
 }
 
 static int maybe_force_nonblocking_wrapper(bool force_nonblocking, struct libos_handle* handle,
-                                           PAL_HANDLE pal_handle,
-                                           int (*func)(PAL_HANDLE, uint64_t, size_t*, void*),
+                                           PAL_HANDLE pal_handle, bool is_pal_stream_read,
                                            void* buf, size_t* size) {
     /*
      * There are 3 kinds of operations that can race here:
@@ -367,9 +366,13 @@ static int maybe_force_nonblocking_wrapper(bool force_nonblocking, struct libos_
     }
 
 again:
-    ret = func(pal_handle, /*offset=*/0, size, buf);
+    if (is_pal_stream_read) {
+        ret = PalStreamRead(pal_handle, /*offset=*/0, size, buf);
+    } else {
+        ret = PalStreamWrite(pal_handle, /*offset=*/0, size, buf);
+    }
     if (ret < 0) {
-        ret = (ret == -PAL_ERROR_TOOLONG) ? -EMSGSIZE : pal_to_unix_errno(ret);
+        ret = (ret == PAL_ERROR_TOOLONG) ? -EMSGSIZE : pal_to_unix_errno(ret);
         if (ret == -EAGAIN && !force_nonblocking) {
             lock(&handle->lock);
             bool handle_is_blocking = !(handle->flags & O_NONBLOCK);
@@ -475,8 +478,8 @@ static int send(struct libos_handle* handle, struct iovec* iov, size_t iov_len, 
         /* `size` is already correct. */
     }
 
-    int ret = maybe_force_nonblocking_wrapper(force_nonblocking, handle, pal_handle, PalStreamWrite,
-                                              buf, &size);
+    int ret = maybe_force_nonblocking_wrapper(force_nonblocking, handle, pal_handle,
+                                              /*is_pal_stream_read=*/false, buf, &size);
     free(backing_buf);
     if (ret < 0) {
         return ret;
@@ -521,8 +524,8 @@ static int recv(struct libos_handle* handle, struct iovec* iov, size_t iov_len, 
         /* `size` is already correct. */
     }
 
-    int ret = maybe_force_nonblocking_wrapper(force_nonblocking, handle, pal_handle, PalStreamRead,
-                                              buf, &size);
+    int ret = maybe_force_nonblocking_wrapper(force_nonblocking, handle, pal_handle,
+                                              /*is_pal_stream_read=*/true, buf, &size);
     if (ret == 0) {
         if (backing_buf) {
             /* Need to copy back to user buffers. */

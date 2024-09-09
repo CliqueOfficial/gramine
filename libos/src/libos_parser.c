@@ -377,12 +377,18 @@ struct parser_table {
     [__NR_setxattr] = {.slow = false, .name = "setxattr", .parser = {NULL}},
     [__NR_lsetxattr] = {.slow = false, .name = "lsetxattr", .parser = {NULL}},
     [__NR_fsetxattr] = {.slow = false, .name = "fsetxattr", .parser = {NULL}},
-    [__NR_getxattr] = {.slow = false, .name = "getxattr", .parser = {NULL}},
-    [__NR_lgetxattr] = {.slow = false, .name = "lgetxattr", .parser = {NULL}},
-    [__NR_fgetxattr] = {.slow = false, .name = "fgetxattr", .parser = {NULL}},
-    [__NR_listxattr] = {.slow = false, .name = "listxattr", .parser = {NULL}},
-    [__NR_llistxattr] = {.slow = false, .name = "llistxattr", .parser = {NULL}},
-    [__NR_flistxattr] = {.slow = false, .name = "flistxattr", .parser = {NULL}},
+    [__NR_getxattr] = {.slow = false, .name = "getxattr", .parser = {parse_long_arg,
+                       parse_string_arg, parse_string_arg, parse_pointer_arg, parse_long_arg}},
+    [__NR_lgetxattr] = {.slow = false, .name = "lgetxattr", .parser = {parse_long_arg,
+                        parse_string_arg, parse_string_arg, parse_pointer_arg, parse_long_arg}},
+    [__NR_fgetxattr] = {.slow = false, .name = "fgetxattr", .parser = {parse_long_arg,
+                        parse_integer_arg, parse_string_arg, parse_pointer_arg, parse_long_arg}},
+    [__NR_listxattr] = {.slow = false, .name = "listxattr", .parser = {parse_long_arg,
+                        parse_string_arg, parse_pointer_arg, parse_long_arg}},
+    [__NR_llistxattr] = {.slow = false, .name = "llistxattr", .parser = {parse_long_arg,
+                         parse_string_arg, parse_pointer_arg, parse_long_arg}},
+    [__NR_flistxattr] = {.slow = false, .name = "flistxattr", .parser = {parse_long_arg,
+                         parse_integer_arg, parse_pointer_arg, parse_long_arg}},
     [__NR_removexattr] = {.slow = false, .name = "removexattr", .parser = {NULL}},
     [__NR_lremovexattr] = {.slow = false, .name = "lremovexattr", .parser = {NULL}},
     [__NR_fremovexattr] = {.slow = false, .name = "fremovexattr", .parser = {NULL}},
@@ -1665,6 +1671,25 @@ void warn_unsupported_syscall(unsigned long sysno) {
         log_warning("Unsupported system call %s", syscall_parser_table[sysno].name);
     else
         log_warning("Unsupported system call %lu", sysno);
+}
+
+void trace_mock_syscall(unsigned long sysno) {
+    log_trace("%s(...) = %ld (mock)", syscall_parser_table[sysno].name,
+              libos_mock_syscall_table[sysno].return_value);
+}
+
+int get_syscall_number(const char* name, unsigned long* out_sysno) {
+    static_assert(LIBOS_SYSCALL_BOUND == ARRAY_SIZE(syscall_parser_table), "oops");
+
+    for (size_t i = 0; i < LIBOS_SYSCALL_BOUND; i++) {
+        if (!syscall_parser_table[i].name)
+            continue;
+        if (strcmp(name, syscall_parser_table[i].name) == 0) {
+            *out_sysno = i;
+            return 0;
+        }
+    }
+    return -ENOSYS;
 }
 
 static int buf_write_all(const char* str, size_t size, void* arg) {

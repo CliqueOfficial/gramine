@@ -117,7 +117,7 @@ static void setup_asan(void) {
     if (IS_PTR_ERR(addr) || addr != (void*)ASAN_SHADOW_START) {
         /* We are super early in the init sequence, TCB is not yet set, we probably should not call
          * any logging functions. */
-        DO_SYSCALL(exit_group, PAL_ERROR_NOMEM);
+        DO_SYSCALL(exit_group, 1);
         die_or_inf_loop();
     }
 }
@@ -163,7 +163,7 @@ noreturn void pal_linux_main(void* initial_rsp, void* fini_callback) {
     if (ret < 0) {
         /* We failed to install a TCB (and haven't applied relocations yet), so no other code will
          * work anyway */
-        DO_SYSCALL(exit_group, PAL_ERROR_DENIED);
+        DO_SYSCALL(exit_group, 1);
         die_or_inf_loop();
     }
 
@@ -182,6 +182,8 @@ noreturn void pal_linux_main(void* initial_rsp, void* fini_callback) {
         INIT_FAIL("_PalSystemTimeQuery() failed: %s", pal_strerror(ret));
 
     call_init_array();
+
+    g_pal_public_state.confidential_computing = false;
 
     /* Initialize alloc_align as early as possible, a lot of PAL APIs depend on this being set. */
     g_pal_public_state.alloc_align = g_page_size;

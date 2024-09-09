@@ -70,27 +70,24 @@ struct loadcmd {
     /*
      * Load command for a single segment. The following properties are true:
      *
-     *   - start <= data_end <= map_end <= alloc_end
-     *   - start, map_end, alloc_end are page-aligned
+     *   - start <= alloc_end; both are page-aligned
+     *   - [start + filesz, alloc_end) is zeroed out (corresponds to the BSS section)
      *   - map_off is page-aligned
      *
      *   The addresses are not relocated (i.e. you need to add l_base_diff to them).
      *
-     *   The same struct is used also in libos/src/libos_rtld.c code.
+     *   A similar struct is used also in libos/src/libos_rtld.c code.
      */
 
     /* Start of memory area */
     elf_addr_t start;
 
-    /* End of file data (data_end .. alloc_end should be zeroed out) */
-    elf_addr_t data_end;
-
-    /* End of mapped file data (data_end rounded up to page size, so that we can mmap
-     * start .. map_end) */
-    elf_addr_t map_end;
-
     /* End of memory area */
     elf_addr_t alloc_end;
+
+    /* Segment's file-image size (plus possible space for unused bytes at the beginning of the
+     * mapped segment, required due to page-alignment reasons) */
+    elf_addr_t filesz;
 
     /* Offset from the beginning of file at which the first byte of the segment resides */
     elf_off_t map_off;
@@ -133,7 +130,7 @@ int find_string_and_symbol_tables(elf_addr_t ehdr_addr, elf_addr_t base_diff,
     elf_dyn_t* dynamic_section = find_dynamic_section(ehdr_addr, base_diff);
     if (!dynamic_section) {
         log_error("Loaded binary doesn't have dynamic section (required for symbol resolution)");
-        return -PAL_ERROR_DENIED;
+        return PAL_ERROR_DENIED;
     }
 
     /* iterate through DSO's dynamic section to find the string table and the symbol table */
@@ -159,7 +156,7 @@ int find_string_and_symbol_tables(elf_addr_t ehdr_addr, elf_addr_t base_diff,
 
     if (!string_table || !symbol_table || !symbol_table_cnt) {
         log_error("Loaded binary doesn't have string table, symbol table and/or hash table");
-        return -PAL_ERROR_DENIED;
+        return PAL_ERROR_DENIED;
     }
 
     *out_string_table     = string_table;
@@ -172,7 +169,7 @@ static int find_symbol_in_loaded_maps(struct link_map* map, elf_rela_t* rela,
                                       elf_addr_t* out_symbol_addr) {
     elf_xword_t symbol_idx = ELF_R_SYM(rela->r_info);
     if (symbol_idx >= (elf_xword_t)map->symbol_table_cnt)
-        return -PAL_ERROR_DENIED;
+        return PAL_ERROR_DENIED;
 
     const char* symbol_name = map->string_table + map->symbol_table[symbol_idx].st_name;
 
@@ -186,7 +183,7 @@ static int find_symbol_in_loaded_maps(struct link_map* map, elf_rela_t* rela,
     if (map == &g_pal_map) {
         /* PAL ELF object tried to find symbol in itself but couldn't */
         log_error("Could not resolve symbol %s in PAL ELF object", symbol_name);
-        return -PAL_ERROR_DENIED;
+        return PAL_ERROR_DENIED;
     }
 
     /* next try to find in PAL ELF object */
@@ -205,7 +202,7 @@ static int find_symbol_in_loaded_maps(struct link_map* map, elf_rela_t* rela,
 
     /* this could happen if e.g. LibOS and PAL binaries are out of sync */
     log_error("Could not resolve symbol %s needed by binary %s", symbol_name, map->l_name);
-    return -PAL_ERROR_DENIED;
+    return PAL_ERROR_DENIED;
 }
 
 static int verify_dynamic_entries(struct link_map* map) {
@@ -231,38 +228,38 @@ static int verify_dynamic_entries(struct link_map* map) {
             case DT_RELENT:
                 if (dynamic_section_entry->d_un.d_val != sizeof(elf_rel_t)) {
                     log_error("Unexpected DT_RELENT (size of one Rel reloc)");
-                    return -PAL_ERROR_DENIED;
+                    return PAL_ERROR_DENIED;
                 }
                 break;
             case DT_RELAENT:
                 if (dynamic_section_entry->d_un.d_val != sizeof(elf_rela_t)) {
                     log_error("Unexpected DT_RELAENT (size of one Rela reloc)");
-                    return -PAL_ERROR_DENIED;
+                    return PAL_ERROR_DENIED;
                 }
                 break;
             case DT_RELRENT:
                 if (dynamic_section_entry->d_un.d_val != sizeof(elf_relr_t)) {
                     log_error("Unexpected DT_RELRENT (size of one Relr reloc)");
-                    return -PAL_ERROR_DENIED;
+                    return PAL_ERROR_DENIED;
                 }
                 break;
             case DT_SYMENT:
                 if (dynamic_section_entry->d_un.d_val != sizeof(elf_sym_t)) {
                     log_error("Unexpected DT_SYMENT (size of one symbol table entry)");
-                    return -PAL_ERROR_DENIED;
+                    return PAL_ERROR_DENIED;
                 }
                 break;
             case DT_PLTREL:
                 if (dynamic_section_entry->d_un.d_val != DT_RELA) {
                     log_error("Unexpected DT_PLTREL (type of relocs in PLT must be Rela)");
-                    return -PAL_ERROR_DENIED;
+                    return PAL_ERROR_DENIED;
                 }
                 break;
             case DT_NEEDED:
                 if (needed_offset_found) {
                     log_error("Loaded binary has more than one dependency (must be only one "
                               "dependency -- the PAL binary)");
-                    return -PAL_ERROR_DENIED;
+                    return PAL_ERROR_DENIED;
                 }
                 needed_offset = dynamic_section_entry->d_un.d_val;
                 needed_offset_found = true;
@@ -309,10 +306,10 @@ static int verify_dynamic_entries(struct link_map* map) {
                 /* be explicit about unsupported RELR relocation type */
                 log_error("Unsupported relocation type DT_RELR; you may need to rebuild Gramine "
                           "with `-Wl,-z,nopack-relative-relocs` linker option");
-                return -PAL_ERROR_DENIED;
+                return PAL_ERROR_DENIED;
             default:
                 log_error("Unrecognized dynamic entry (DT_*) %ld", dynamic_section_entry->d_tag);
-                return -PAL_ERROR_DENIED;
+                return PAL_ERROR_DENIED;
 
             }
         dynamic_section_entry++;
@@ -320,7 +317,7 @@ static int verify_dynamic_entries(struct link_map* map) {
 
     if (!string_table || !string_table_size) {
         log_error("Loaded binary doesn't have string table or it is empty (DT_STRTAB/DT_STRSZ)");
-        return -PAL_ERROR_DENIED;
+        return PAL_ERROR_DENIED;
     }
 
     /* verify DT_NEEDED: LibOS and PAL tests have PAL lib; PAL doesn't have this entry */
@@ -328,7 +325,7 @@ static int verify_dynamic_entries(struct link_map* map) {
         const char* needed = string_table + needed_offset;
         if (strcmp(needed, g_pal_soname) != 0) {
             log_error("Unexpected DT_NEEDED (must be name of the PAL library)");
-            return -PAL_ERROR_DENIED;
+            return PAL_ERROR_DENIED;
         }
     }
 
@@ -373,7 +370,7 @@ static int perform_relocations(struct link_map* map) {
 
     if (!relas_addr && relas_size) {
         log_error("Incorrect relocations (no relocs found but size is non-zero)");
-        return -PAL_ERROR_DENIED;
+        return PAL_ERROR_DENIED;
     }
 
     /* perform relocs: supported binaries may have only R_X86_64_RELATIVE/R_X86_64_GLOB_DAT relas */
@@ -394,22 +391,22 @@ static int perform_relocations(struct link_map* map) {
         } else {
             log_error("Unrecognized relocation type; PAL loader currently supports only "
                       "R_X86_64_RELATIVE and R_X86_64_GLOB_DAT relocations");
-            return -PAL_ERROR_DENIED;
+            return PAL_ERROR_DENIED;
         }
     }
 
     if (!plt_relas_addr && plt_relas_size) {
         log_error("Incorrect PLT relocations (no relocs found but size is non-zero)");
-        return -PAL_ERROR_DENIED;
+        return PAL_ERROR_DENIED;
     }
 
     /* perform PLT relocs: supported binaries may have only R_X86_64_JUMP_SLOT relas */
-    elf_rela_t* plt_relas_addr_end = (void*)plt_relas_addr + plt_relas_size;
+    elf_rela_t* plt_relas_addr_end = (elf_rela_t*)((uintptr_t)plt_relas_addr + plt_relas_size);
     for (elf_rela_t* plt_rela = plt_relas_addr; plt_rela < plt_relas_addr_end; plt_rela++) {
         if (ELF_R_TYPE(plt_rela->r_info) != R_X86_64_JUMP_SLOT) {
             log_error("Unrecognized relocation type; PAL loader currently supports only "
                       "R_X86_64_JUMP_SLOT relocations");
-            return -PAL_ERROR_DENIED;
+            return PAL_ERROR_DENIED;
         }
 
         elf_addr_t symbol_addr;
@@ -423,16 +420,13 @@ static int perform_relocations(struct link_map* map) {
 
     if (relas_count != expected_relas_count) {
         log_error("Expected %ld Rela relocs but got %ld", expected_relas_count, relas_count);
-        return -PAL_ERROR_DENIED;
+        return PAL_ERROR_DENIED;
     }
 
     return 0;
 }
 
-/* `elf_file_buf` contains the beginning of ELF file (at least ELF header and all program headers);
- * we don't bother undoing _PalStreamMap() and _PalVirtualMemoryAlloc() in case of failure. */
-static int create_and_relocate_entrypoint(PAL_HANDLE handle, const char* uri,
-                                          const char* elf_file_buf) {
+static int create_and_relocate_entrypoint(const char* uri, const char* elf_file_buf) {
     int ret;
     struct loadcmd* loadcmds = NULL;
 
@@ -440,11 +434,11 @@ static int create_and_relocate_entrypoint(PAL_HANDLE handle, const char* uri,
     size_t l_relro_size = 0;
 
     if (!strstartswith(uri, URI_PREFIX_FILE))
-        return -PAL_ERROR_INVAL;
+        return PAL_ERROR_INVAL;
 
     g_entrypoint_map.l_name = strdup(uri + URI_PREFIX_FILE_LEN);
     if (!g_entrypoint_map.l_name) {
-        ret = -PAL_ERROR_NOMEM;
+        ret = PAL_ERROR_NOMEM;
         goto out;
     }
 
@@ -455,7 +449,7 @@ static int create_and_relocate_entrypoint(PAL_HANDLE handle, const char* uri,
 
     loadcmds = malloc(sizeof(*loadcmds) * ehdr->e_phnum);
     if (!loadcmds) {
-        ret = -PAL_ERROR_NOMEM;
+        ret = PAL_ERROR_NOMEM;
         goto out;
     }
 
@@ -471,34 +465,33 @@ static int create_and_relocate_entrypoint(PAL_HANDLE handle, const char* uri,
             case PT_LOAD:
                 if (!IS_ALIGNED_POW2(ph->p_vaddr - ph->p_offset, ph->p_align)) {
                     log_error("ELF loadable program segment not aligned");
-                    ret = -PAL_ERROR_INVAL;
+                    ret = PAL_ERROR_INVAL;
                     goto out;
                 }
 
                 struct loadcmd* c = &loadcmds[loadcmds_cnt++];
                 c->start     = ALLOC_ALIGN_DOWN(ph->p_vaddr);
-                c->map_end   = ALLOC_ALIGN_UP(ph->p_vaddr + ph->p_filesz);
                 c->map_off   = ALLOC_ALIGN_DOWN(ph->p_offset);
-                c->data_end  = ph->p_vaddr + ph->p_filesz;
+                c->filesz    = ph->p_filesz + (ph->p_vaddr - ALLOC_ALIGN_DOWN(ph->p_vaddr));
                 c->alloc_end = ALLOC_ALIGN_UP(ph->p_vaddr + ph->p_memsz);
                 c->prot      = elf_segment_prot_to_pal_prot(ph->p_flags);
 
                 /* this is our parser's simplification, not a requirement of the ELF spec */
                 if (loadcmds_cnt == 1 && c->map_off) {
                     log_error("ELF first loadable program segment has non-zero offset");
-                    ret = -PAL_ERROR_INVAL;
+                    ret = PAL_ERROR_INVAL;
                     goto out;
                 }
 
                 if (loadcmds_cnt == 1 && ehdr->e_type == ET_DYN && c->start) {
                     log_error("DYN ELF first loadable program segment has non-zero map address");
-                    ret = -PAL_ERROR_INVAL;
+                    ret = PAL_ERROR_INVAL;
                     goto out;
                 }
 
-                if (c->start >= c->map_end) {
+                if (c->start >= c->alloc_end) {
                     log_error("ELF loadable program segment has impossible memory region to map");
-                    ret = -PAL_ERROR_INVAL;
+                    ret = PAL_ERROR_INVAL;
                     goto out;
                 }
                 break;
@@ -512,7 +505,7 @@ static int create_and_relocate_entrypoint(PAL_HANDLE handle, const char* uri,
 
     if (!loadcmds_cnt) {
         log_error("ELF file has no loadable segments");
-        ret = -PAL_ERROR_INVAL;
+        ret = PAL_ERROR_INVAL;
         goto out;
     }
 
@@ -545,28 +538,26 @@ static int create_and_relocate_entrypoint(PAL_HANDLE handle, const char* uri,
         struct loadcmd* c = &loadcmds[i];
 
         void*  map_addr = (void*)(c->start + g_entrypoint_map.l_base_diff);
-        size_t map_size = c->map_end - c->start;
+        size_t map_size = c->alloc_end - c->start;
 
-        ret = _PalStreamMap(handle, map_addr, c->prot | PAL_PROT_WRITECOPY, c->map_off, map_size);
+        assert(IS_ALLOC_ALIGNED_PTR(map_addr));
+        assert(IS_ALLOC_ALIGNED(map_size));
+
+        ret = _PalVirtualMemoryAlloc(map_addr, map_size, c->prot | PAL_PROT_WRITE);
         if (ret < 0) {
-            log_error("Failed to map segment from ELF file");
+            log_error("Failed to prepare mapping for segment from ELF file");
+            goto out;
+        }
+        memcpy(map_addr, elf_file_buf + c->map_off, c->filesz);
+        ret = _PalVirtualMemoryProtect(map_addr, map_size, c->prot);
+        if (ret < 0) {
+            log_error("Failed to remove write memory protection off the segment from ELF file");
             goto out;
         }
 
         /* adjust segment's virtual addresses (p_vaddr) to actual virtual addresses in memory */
         c->start     += g_entrypoint_map.l_base_diff;
-        c->map_end   += g_entrypoint_map.l_base_diff;
-        c->data_end  += g_entrypoint_map.l_base_diff;
         c->alloc_end += g_entrypoint_map.l_base_diff;
-
-        if (c->alloc_end == c->map_end)
-            continue;
-
-        ret = _PalVirtualMemoryAlloc((void*)c->map_end, c->alloc_end - c->map_end, c->prot);
-        if (ret < 0) {
-            log_error("Failed to zero-fill the rest of segment from ELF file");
-            goto out;
-        }
     }
 
     /* adjust shared object's virtual addresses (p_vaddr) to actual virtual addresses in memory */
@@ -585,8 +576,8 @@ static int create_and_relocate_entrypoint(PAL_HANDLE handle, const char* uri,
     if (ret < 0)
         goto out;
 
-    /* zero out the unused parts of loaded segments and perform relocations on loaded segments
-     * (need to first change memory permissions to writable and then revert permissions back) */
+    /* perform relocations on loaded segments (need to first change memory permissions to writable
+     * and then revert permissions back) */
     for (size_t i = 0; i < loadcmds_cnt; i++) {
         struct loadcmd* c = &loadcmds[i];
         ret = _PalVirtualMemoryProtect((void*)c->start, c->alloc_end - c->start,
@@ -595,11 +586,6 @@ static int create_and_relocate_entrypoint(PAL_HANDLE handle, const char* uri,
             log_error("Failed to add write memory protection on the segment from ELF file");
             goto out;
         }
-
-        /* zero out uninitialized but allocated part of the loaded segment (note that part of
-         * segment allocated via _PalVirtualMemoryAlloc() is already zeroed out) */
-        if (ALLOC_ALIGN_UP(c->data_end) > c->data_end)
-            memset((void*)c->data_end, 0, ALLOC_ALIGN_UP(c->data_end) - c->data_end);
     }
 
     ret = perform_relocations(&g_entrypoint_map);
@@ -641,57 +627,88 @@ out:
 int load_entrypoint(const char* uri) {
     int ret;
     PAL_HANDLE handle;
+    char* buf = NULL;
 
-    char buf[1024]; /* must be enough to hold ELF header and all its program headers */
     ret = _PalStreamOpen(&handle, uri, PAL_ACCESS_RDONLY, /*share_flags=*/0, PAL_CREATE_NEVER,
                          /*options=*/0);
     if (ret < 0)
         return ret;
 
-    ret = _PalStreamRead(handle, 0, sizeof(buf), buf);
+    PAL_STREAM_ATTR attr;
+    ret = _PalStreamAttributesQueryByHandle(handle, &attr);
     if (ret < 0) {
-        log_error("Reading ELF file failed");
+        log_error("Getting size of loader entrypoint binary failed");
         goto out;
     }
 
-    size_t bytes_read = (size_t)ret;
+    buf = malloc(attr.pending_size);
+    if (!buf) {
+        log_error("Allocating buffer to hold loader entrypoint binary of size %lu failed",
+                  attr.pending_size);
+        goto out;
+    }
 
-    elf_ehdr_t* ehdr = (elf_ehdr_t*)&buf;
-    if (bytes_read < sizeof(elf_ehdr_t)) {
-        log_error("ELF file is too small (cannot read the ELF header)");
-        ret = -PAL_ERROR_INVAL;
+    size_t buf_offset = 0;
+    size_t remaining = attr.pending_size;
+    while (remaining > 0) {
+        int64_t read = _PalStreamRead(handle, buf_offset, remaining, buf + buf_offset);
+        if (read == PAL_ERROR_INTERRUPTED || read == PAL_ERROR_TRYAGAIN)
+            continue;
+        if (read <= 0) {
+            log_error("Reading loader entrypoint binary failed");
+            ret = read < 0 ? read : PAL_ERROR_DENIED;
+            goto out;
+        }
+
+        assert((size_t)read <= remaining);
+        remaining -= (size_t)read;
+        buf_offset += (size_t)read;
+    }
+    assert(remaining == 0);
+
+    ret = _PalValidateEntrypoint(buf, attr.pending_size);
+    if (ret < 0) {
+        log_error("Validating loader entrypoint binary failed");
+        goto out;
+    }
+
+    elf_ehdr_t* ehdr = (elf_ehdr_t*)buf;
+    if (attr.pending_size < sizeof(elf_ehdr_t)) {
+        log_error("Loader entrypoint binary is too small (cannot read the ELF header)");
+        ret = PAL_ERROR_INVAL;
         goto out;
     }
 
     if (memcmp(ehdr->e_ident, g_expected_elf_header, EI_OSABI)) {
-        log_error("ELF file has unexpected header (unexpected first 7 bytes)");
-        ret = -PAL_ERROR_INVAL;
+        log_error("Loader entrypoint binary has unexpected ELF header (unexpected first 7 bytes)");
+        ret = PAL_ERROR_INVAL;
         goto out;
     }
 
     if (ehdr->e_ident[EI_OSABI] != ELFOSABI_SYSV && ehdr->e_ident[EI_OSABI] != ELFOSABI_LINUX) {
-        log_error("ELF file has unexpected OS/ABI: PAL loader currently supports only SYS-V and "
-                  "LINUX");
-        ret = -PAL_ERROR_INVAL;
+        log_error("Loader entrypoint binary has unexpected OS/ABI: PAL loader currently supports "
+                  "only SYS-V and LINUX");
+        ret = PAL_ERROR_INVAL;
         goto out;
     }
 
     if (ehdr->e_type != ET_DYN && ehdr->e_type != ET_EXEC) {
-        log_error("ELF file has unexpected type: PAL loader currently supports only DYN and EXEC");
-        ret = -PAL_ERROR_INVAL;
+        log_error("Loader entrypoint binary has unexpected type: PAL loader currently supports "
+                  "only DYN and EXEC");
+        ret = PAL_ERROR_INVAL;
         goto out;
     }
 
-    if (bytes_read < ehdr->e_phoff + ehdr->e_phnum * sizeof(elf_phdr_t)) {
-        log_error("Read too few bytes from the ELF file (not all program headers)");
-        ret = -PAL_ERROR_INVAL;
+    if (attr.pending_size < ehdr->e_phoff + ehdr->e_phnum * sizeof(elf_phdr_t)) {
+        log_error("Read too few bytes from loader entrypoint binary (not all program headers)");
+        ret = PAL_ERROR_INVAL;
         goto out;
     }
 
-    ret = create_and_relocate_entrypoint(handle, uri, buf);
+    ret = create_and_relocate_entrypoint(uri, buf);
     if (ret < 0) {
-        log_error("Could not map the ELF file into memory and then relocate it");
-        ret = -PAL_ERROR_INVAL;
+        log_error("Could not map loader entrypoint binary into memory and then relocate it");
+        ret = PAL_ERROR_INVAL;
         goto out;
     }
 
@@ -702,6 +719,7 @@ int load_entrypoint(const char* uri) {
 
 out:
     _PalObjectDestroy(handle);
+    free(buf);
     return ret;
 }
 
@@ -724,7 +742,7 @@ int setup_pal_binary(void) {
     elf_dyn_t* dynamic_section = find_dynamic_section(pal_binary_addr, pal_base_diff);
     if (!dynamic_section) {
         log_error("PAL binary doesn't have dynamic section (required for symbol resolution)");
-        return -PAL_ERROR_DENIED;
+        return PAL_ERROR_DENIED;
     }
 
     g_pal_map.l_name = NULL; /* will be overwritten later with argv[0] */
@@ -756,7 +774,7 @@ int setup_pal_binary(void) {
     }
     if (!soname_offset_found) {
         log_error("Did not find DT_SONAME for PAL binary (name of the PAL library)");
-        return -PAL_ERROR_DENIED;
+        return PAL_ERROR_DENIED;
     }
     g_pal_soname = g_pal_map.string_table + soname_offset;
 

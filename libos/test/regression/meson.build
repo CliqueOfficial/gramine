@@ -70,9 +70,10 @@ tests = {
     'large_mmap': {},
     'madvise': {},
     'mkfifo': {},
-    'mmap_file': {},
     'mmap_file_backed': {},
     'mmap_file_emulated': {},
+    'mmap_file_sigbus': {},
+    'mock_syscalls': {},
     'mprotect_file_fork': {},
     'mprotect_prot_growsdown': {},
     'multi_pthread': {},
@@ -87,6 +88,7 @@ tests = {
     'pipe': {},
     'pipe_nonblocking': {},
     'pipe_ocloexec': {},
+    'pipe_race': {},
     'poll': {},
     'poll_closed_fd': {},
     'poll_many_types': {},
@@ -100,6 +102,7 @@ tests = {
     'readdir': {},
     'rename_unlink': {},
     'rename_unlink_fchown': {},
+    'rlimit_nofile': {},
     'run_test': {
         'include_directories': include_directories(
             # for `gramine_entry_api.h`
@@ -167,6 +170,7 @@ if host_machine.cpu_family() == 'x86_64'
         'debug_regs_x86_64': {
             'c_args': '-g3',
         },
+        'in_out_instruction' : {},
         'rdtsc': {},
         'sighandler_divbyzero': {},
     }

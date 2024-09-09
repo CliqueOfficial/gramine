@@ -114,13 +114,13 @@ static noreturn int thread_handshake_func(void* param) {
  * end of the pipe connects to this listening socket, a new accepted socket and the corresponding
  * PAL handle are created, and this `pipesrv` handle can be closed.
  */
-static int pipe_listen(PAL_HANDLE* handle, const char* name, pal_stream_options_t options) {
+static int pipe_listen(PAL_HANDLE* out_handle, const char* name, pal_stream_options_t options) {
     int ret;
 
     struct sockaddr_un addr;
     ret = get_gramine_unix_socket_addr(name, &addr);
     if (ret < 0)
-        return -PAL_ERROR_DENIED;
+        return PAL_ERROR_DENIED;
 
     size_t addrlen = sizeof(struct sockaddr_un);
     int nonblock = options & PAL_OPTION_NONBLOCK ? SOCK_NONBLOCK : 0;
@@ -133,7 +133,7 @@ static int pipe_listen(PAL_HANDLE* handle, const char* name, pal_stream_options_
     PAL_HANDLE hdl = calloc(1, HANDLE_SIZE(pipe));
     if (!hdl) {
         ocall_close(ret);
-        return -PAL_ERROR_NOMEM;
+        return PAL_ERROR_NOMEM;
     }
 
     init_handle_hdr(hdl, PAL_TYPE_PIPESRV);
@@ -142,6 +142,7 @@ static int pipe_listen(PAL_HANDLE* handle, const char* name, pal_stream_options_
     hdl->pipe.nonblocking = !!(options & PAL_OPTION_NONBLOCK);
 
     /* pipesrv handle is only intermediate so it doesn't need SSL context or session key */
+    spinlock_init(&hdl->pipe.lock);
     hdl->pipe.ssl_ctx        = NULL;
     hdl->pipe.is_server      = false;
     hdl->pipe.handshake_done = true; /* pipesrv doesn't do any handshake so consider it done */
@@ -150,10 +151,10 @@ static int pipe_listen(PAL_HANDLE* handle, const char* name, pal_stream_options_
     if (ret < 0) {
         ocall_close(hdl->pipe.fd);
         free(hdl);
-        return -PAL_ERROR_DENIED;
+        return PAL_ERROR_DENIED;
     }
 
-    *handle = hdl;
+    *out_handle = hdl;
     return 0;
 }
 
@@ -172,9 +173,10 @@ static int pipe_listen(PAL_HANDLE* handle, const char* name, pal_stream_options_
  * corresponding underlying socket and is returned in `client`. This `pipecli` PAL handle denotes
  * our end of the pipe. Typically, `pipesrv` handle is not needed after this and can be closed.
  */
-static int pipe_waitforclient(PAL_HANDLE handle, PAL_HANDLE* client, pal_stream_options_t options) {
+static int pipe_waitforclient(PAL_HANDLE handle, PAL_HANDLE* out_client,
+                              pal_stream_options_t options) {
     if (handle->hdr.type != PAL_TYPE_PIPESRV)
-        return -PAL_ERROR_NOTSERVER;
+        return PAL_ERROR_NOTSERVER;
 
     assert(WITHIN_MASK(options, PAL_OPTION_NONBLOCK));
     bool nonblocking = options & PAL_OPTION_NONBLOCK;
@@ -188,7 +190,7 @@ static int pipe_waitforclient(PAL_HANDLE handle, PAL_HANDLE* client, pal_stream_
     PAL_HANDLE clnt = calloc(1, HANDLE_SIZE(pipe));
     if (!clnt) {
         ocall_close(ret);
-        return -PAL_ERROR_NOMEM;
+        return PAL_ERROR_NOMEM;
     }
 
     init_handle_hdr(clnt, PAL_TYPE_PIPECLI);
@@ -198,6 +200,7 @@ static int pipe_waitforclient(PAL_HANDLE handle, PAL_HANDLE* client, pal_stream_
 
     /* create the SSL pre-shared key for this end of the pipe; note that SSL context is initialized
      * lazily on first read/write on this pipe */
+    spinlock_init(&clnt->pipe.lock);
     clnt->pipe.ssl_ctx        = NULL;
     clnt->pipe.is_server      = false;
     clnt->pipe.handshake_done = false;
@@ -217,7 +220,7 @@ static int pipe_waitforclient(PAL_HANDLE handle, PAL_HANDLE* client, pal_stream_
     }
     __atomic_store_n(&clnt->pipe.handshake_done, true, __ATOMIC_RELEASE);
 
-    *client = clnt;
+    *out_client = clnt;
     return 0;
 
 out_err:
@@ -243,13 +246,13 @@ out_err:
  * handle is created with the corresponding underlying socket and is returned in `handle`.
  * The other end of the pipe is typically of type `pipecli`.
  */
-static int pipe_connect(PAL_HANDLE* handle, const char* name, pal_stream_options_t options) {
+static int pipe_connect(PAL_HANDLE* out_handle, const char* name, pal_stream_options_t options) {
     int ret;
 
     struct sockaddr_un addr;
     ret = get_gramine_unix_socket_addr(name, &addr);
     if (ret < 0)
-        return -PAL_ERROR_DENIED;
+        return PAL_ERROR_DENIED;
 
     assert(WITHIN_MASK(options, PAL_OPTION_NONBLOCK));
     unsigned int addrlen = sizeof(struct sockaddr_un);
@@ -264,7 +267,7 @@ static int pipe_connect(PAL_HANDLE* handle, const char* name, pal_stream_options
     PAL_HANDLE hdl = calloc(1, HANDLE_SIZE(pipe));
     if (!hdl) {
         ocall_close(ret);
-        return -PAL_ERROR_NOMEM;
+        return PAL_ERROR_NOMEM;
     }
 
     init_handle_hdr(hdl, PAL_TYPE_PIPE);
@@ -277,9 +280,10 @@ static int pipe_connect(PAL_HANDLE* handle, const char* name, pal_stream_options
     if (ret < 0) {
         ocall_close(hdl->pipe.fd);
         free(hdl);
-        return -PAL_ERROR_DENIED;
+        return PAL_ERROR_DENIED;
     }
 
+    spinlock_init(&hdl->pipe.lock);
     hdl->pipe.handshake_helper_thread_hdl = NULL;
     hdl->pipe.ssl_ctx        = NULL;
     hdl->pipe.is_server      = true;
@@ -294,13 +298,13 @@ static int pipe_connect(PAL_HANDLE* handle, const char* name, pal_stream_options
     if (ret < 0) {
         ocall_close(hdl->pipe.fd);
         free(hdl);
-        return -PAL_ERROR_DENIED;
+        return PAL_ERROR_DENIED;
     }
 
     /* inform helper thread about its PAL thread handle `thread_hdl`; see thread_handshake_func() */
     __atomic_store_n(&hdl->pipe.handshake_helper_thread_hdl, thread_hdl, __ATOMIC_RELEASE);
 
-    *handle = hdl;
+    *out_handle = hdl;
     return 0;
 }
 
@@ -334,7 +338,7 @@ static int pipe_open(PAL_HANDLE* handle, const char* type, const char* uri, enum
     assert(create == PAL_CREATE_IGNORED);
 
     if (!WITHIN_MASK(share, PAL_SHARE_MASK) || !WITHIN_MASK(options, PAL_OPTION_MASK))
-        return -PAL_ERROR_INVAL;
+        return PAL_ERROR_INVAL;
 
     if (!strcmp(type, URI_TYPE_PIPE_SRV))
         return pipe_listen(handle, uri, options);
@@ -342,7 +346,7 @@ static int pipe_open(PAL_HANDLE* handle, const char* type, const char* uri, enum
     if (!strcmp(type, URI_TYPE_PIPE))
         return pipe_connect(handle, uri, options);
 
-    return -PAL_ERROR_INVAL;
+    return PAL_ERROR_INVAL;
 }
 
 /*!
@@ -357,10 +361,10 @@ static int pipe_open(PAL_HANDLE* handle, const char* type, const char* uri, enum
  */
 static int64_t pipe_read(PAL_HANDLE handle, uint64_t offset, uint64_t len, void* buffer) {
     if (offset)
-        return -PAL_ERROR_INVAL;
+        return PAL_ERROR_INVAL;
 
     if (handle->hdr.type != PAL_TYPE_PIPECLI && handle->hdr.type != PAL_TYPE_PIPE)
-        return -PAL_ERROR_NOTCONNECTION;
+        return PAL_ERROR_NOTCONNECTION;
 
     ssize_t bytes;
     /* use a secure session (should be already initialized) */
@@ -368,10 +372,12 @@ static int64_t pipe_read(PAL_HANDLE handle, uint64_t offset, uint64_t len, void*
         CPU_RELAX();
 
     if (!handle->pipe.ssl_ctx)
-        return -PAL_ERROR_NOTCONNECTION;
+        return PAL_ERROR_NOTCONNECTION;
 
+    spinlock_lock(&handle->pipe.lock);
     bytes = _PalStreamSecureRead(handle->pipe.ssl_ctx, buffer, len,
                                  /*is_blocking=*/!handle->pipe.nonblocking);
+    spinlock_unlock(&handle->pipe.lock);
 
     return bytes;
 }
@@ -388,10 +394,10 @@ static int64_t pipe_read(PAL_HANDLE handle, uint64_t offset, uint64_t len, void*
  */
 static int64_t pipe_write(PAL_HANDLE handle, uint64_t offset, uint64_t len, const void* buffer) {
     if (offset)
-        return -PAL_ERROR_INVAL;
+        return PAL_ERROR_INVAL;
 
     if (handle->hdr.type != PAL_TYPE_PIPECLI && handle->hdr.type != PAL_TYPE_PIPE)
-        return -PAL_ERROR_NOTCONNECTION;
+        return PAL_ERROR_NOTCONNECTION;
 
     ssize_t bytes;
     /* use a secure session (should be already initialized) */
@@ -399,10 +405,12 @@ static int64_t pipe_write(PAL_HANDLE handle, uint64_t offset, uint64_t len, cons
         CPU_RELAX();
 
     if (!handle->pipe.ssl_ctx)
-        return -PAL_ERROR_NOTCONNECTION;
+        return PAL_ERROR_NOTCONNECTION;
 
+    spinlock_lock(&handle->pipe.lock);
     bytes = _PalStreamSecureWrite(handle->pipe.ssl_ctx, buffer, len,
                                   /*is_blocking=*/!handle->pipe.nonblocking);
+    spinlock_unlock(&handle->pipe.lock);
 
     return bytes;
 }
@@ -453,7 +461,7 @@ static int pipe_delete(PAL_HANDLE handle, enum pal_delete_mode delete_mode) {
             shutdown = SHUT_WR;
             break;
         default:
-            return -PAL_ERROR_INVAL;
+            return PAL_ERROR_INVAL;
     }
 
     /* This pipe might use a secure session, make sure all initial work is done. */

@@ -10,6 +10,7 @@
 
 #include "api.h"
 #include "cpu.h"
+#include "crypto.h"
 #include "enclave_api.h"
 #include "hex.h"
 #include "pal.h"
@@ -173,7 +174,7 @@ int _PalSystemTimeQuery(uint64_t* out_usec) {
                  * TSC/usec pair (time drift is contained), use the RDTSC-calculated time */
                 usec = start_usec + diff_usec;
                 if (usec < start_usec)
-                    return -PAL_ERROR_OVERFLOW;
+                    return PAL_ERROR_OVERFLOW;
 
                 /* It's simply `last_usec = max(last_usec, usec)`, but executed atomically. */
                 uint64_t expected_usec = __atomic_load_n(&last_usec, __ATOMIC_ACQUIRE);
@@ -196,7 +197,7 @@ int _PalSystemTimeQuery(uint64_t* out_usec) {
     uint64_t tsc_cyc1 = get_tsc();
     ret = ocall_gettime(&usec);
     if (ret < 0)
-        return -PAL_ERROR_DENIED;
+        return PAL_ERROR_DENIED;
     uint64_t tsc_cyc2 = get_tsc();
 
     uint64_t last_recorded_rdtsc = __atomic_load_n(&last_usec, __ATOMIC_ACQUIRE);
@@ -212,7 +213,7 @@ int _PalSystemTimeQuery(uint64_t* out_usec) {
      * mid-point between the RDTSC values obtained right-before and right-after the OCALL. */
     uint64_t tsc_cyc = tsc_cyc1 + (tsc_cyc2 - tsc_cyc1) / 2;
     if (tsc_cyc < tsc_cyc1)
-        return -PAL_ERROR_OVERFLOW;
+        return PAL_ERROR_OVERFLOW;
 
     /* refresh the baseline data if no other thread updated g_start_tsc */
     write_seqbegin(&g_tsc_lock);
@@ -238,7 +239,7 @@ static int g_pal_cpuid_cache_top = 0;
 static spinlock_t g_cpuid_cache_lock = INIT_SPINLOCK_UNLOCKED;
 
 static int get_cpuid_from_cache(unsigned int leaf, unsigned int subleaf, unsigned int values[4]) {
-    int ret = -PAL_ERROR_DENIED;
+    int ret = PAL_ERROR_DENIED;
 
     spinlock_lock(&g_cpuid_cache_lock);
     for (int i = 0; i < g_pal_cpuid_cache_top; i++) {
@@ -608,7 +609,7 @@ int _PalCpuIdRetrieve(uint32_t leaf, uint32_t subleaf, uint32_t values[4]) {
         return 0;
 
     if (ocall_cpuid(leaf, subleaf, values) < 0)
-        return -PAL_ERROR_DENIED;
+        return PAL_ERROR_DENIED;
 
     sanitize_cpuid(leaf, subleaf, values);
 
@@ -624,11 +625,11 @@ fail:
 int init_cpuid(void) {
     uint32_t values[4];
     if (ocall_cpuid(EXTENDED_FEATURE_FLAGS_LEAF, 0x0, values) < 0)
-        return -PAL_ERROR_DENIED;
+        return PAL_ERROR_DENIED;
 
     if (values[CPUID_WORD_EAX] > 2) {
         /* max value for supported sub-leaves of "Extended Feature Flags" leaf is 2 */
-        return -PAL_ERROR_DENIED;
+        return PAL_ERROR_DENIED;
     }
 
     g_extended_feature_flags_max_supported_sub_leaves = values[CPUID_WORD_EAX];
@@ -643,7 +644,7 @@ int _PalAttestationReport(const void* user_report_data, size_t* user_report_data
     __sgx_mem_aligned sgx_report_t stack_report = {0};
 
     if (!user_report_data_size || !target_info_size || !report_size)
-        return -PAL_ERROR_INVAL;
+        return PAL_ERROR_INVAL;
 
     if (*user_report_data_size != sizeof(stack_report_data) ||
         *target_info_size != sizeof(stack_target_info) || *report_size != sizeof(stack_report)) {
@@ -668,7 +669,7 @@ int _PalAttestationReport(const void* user_report_data, size_t* user_report_data
     int ret = sgx_report(&stack_target_info, &stack_report_data, &stack_report);
     if (ret < 0) {
         /* caller already provided reasonable sizes, so just error out without updating them */
-        return -PAL_ERROR_INVAL;
+        return PAL_ERROR_INVAL;
     }
 
     if (populate_target_info) {
@@ -692,7 +693,7 @@ int _PalAttestationQuote(const void* user_report_data, size_t user_report_data_s
     int ret;
 
     if (user_report_data_size != sizeof(sgx_report_data_t))
-        return -PAL_ERROR_INVAL;
+        return PAL_ERROR_INVAL;
 
     enum sgx_attestation_type attestation_type;
     sgx_spid_t spid;
@@ -727,7 +728,7 @@ int _PalAttestationQuote(const void* user_report_data, size_t user_report_data_s
     if (*quote_size < pal_quote_size) {
         *quote_size = pal_quote_size;
         free(pal_quote);
-        return -PAL_ERROR_NOMEM;
+        return PAL_ERROR_NOMEM;
     }
 
     if (quote) {
@@ -745,7 +746,7 @@ int _PalGetSpecialKey(const char* name, void* key, size_t* key_size) {
     sgx_key_128bit_t sgx_key;
 
     if (*key_size < sizeof(sgx_key))
-        return -PAL_ERROR_INVAL;
+        return PAL_ERROR_INVAL;
 
     int ret;
     if (!strcmp(name, PAL_KEY_NAME_SGX_MRENCLAVE)) {
@@ -753,7 +754,7 @@ int _PalGetSpecialKey(const char* name, void* key, size_t* key_size) {
     } else if (!strcmp(name, PAL_KEY_NAME_SGX_MRSIGNER)) {
         ret = sgx_get_seal_key(SGX_KEYPOLICY_MRSIGNER, &sgx_key);
     } else {
-        return -PAL_ERROR_NOTIMPLEMENTED;
+        return PAL_ERROR_NOTIMPLEMENTED;
     }
     if (ret < 0)
         return ret;
@@ -792,9 +793,9 @@ int _PalSegmentBaseGet(enum pal_segment_reg reg, uintptr_t* addr) {
             return 0;
         case PAL_SEGMENT_GS:
             /* GS is internally used, deny any access to it */
-            return -PAL_ERROR_DENIED;
+            return PAL_ERROR_DENIED;
         default:
-            return -PAL_ERROR_INVAL;
+            return PAL_ERROR_INVAL;
     }
 }
 
@@ -806,8 +807,63 @@ int _PalSegmentBaseSet(enum pal_segment_reg reg, uintptr_t addr) {
             return 0;
         case PAL_SEGMENT_GS:
             /* GS is internally used, deny any access to it */
-            return -PAL_ERROR_DENIED;
+            return PAL_ERROR_DENIED;
         default:
-            return -PAL_ERROR_INVAL;
+            return PAL_ERROR_INVAL;
     }
+}
+
+int _PalValidateEntrypoint(const void* buf, size_t size) {
+    int ret;
+    uint8_t manifest_sha256_bytes[32];
+    uint8_t computed_sha256_bytes[32];
+
+    char* entrypoint_sha256_str = NULL;
+    ret = toml_string_in(g_pal_public_state.manifest_root, "loader.entrypoint.sha256",
+                         &entrypoint_sha256_str);
+    if (ret < 0) {
+        log_error("Cannot parse 'loader.entrypoint.sha256' from manifest");
+        return PAL_ERROR_INVAL;
+    }
+
+    if (!entrypoint_sha256_str) {
+        log_error("Cannot find 'loader.entrypoint.sha256' in manifest");
+        return PAL_ERROR_INVAL;
+    }
+
+    if (strlen(entrypoint_sha256_str) != sizeof(manifest_sha256_bytes) * 2) {
+        log_error("Hash in 'loader.entrypoint.sha256' is not a SHA256 hash");
+        ret = PAL_ERROR_INVAL;
+        goto out;
+    }
+
+    char* bytes = hex2bytes(entrypoint_sha256_str, strlen(entrypoint_sha256_str),
+                            manifest_sha256_bytes, sizeof(manifest_sha256_bytes));
+    if (!bytes) {
+        log_error("Could not parse hash in 'loader.entrypoint.sha256'");
+        ret = PAL_ERROR_INVAL;
+        goto out;
+    }
+
+    LIB_SHA256_CONTEXT entrypoint_sha;
+    ret = lib_SHA256Init(&entrypoint_sha);
+    if (ret < 0)
+        goto out;
+    ret = lib_SHA256Update(&entrypoint_sha, buf, size);
+    if (ret < 0)
+        goto out;
+    ret = lib_SHA256Final(&entrypoint_sha, computed_sha256_bytes);
+    if (ret < 0)
+        goto out;
+
+    if (memcmp(computed_sha256_bytes, manifest_sha256_bytes, sizeof(computed_sha256_bytes))) {
+        log_error("Hash of entrypoint does not match with the reference hash in manifest");
+        ret = PAL_ERROR_DENIED;
+        goto out;
+    }
+
+    ret = 0;
+out:
+    free(entrypoint_sha256_str);
+    return ret;
 }

@@ -73,25 +73,25 @@ static int file_open(PAL_HANDLE* handle, const char* type, const char* uri,
                 | PAL_OPTION_TO_LINUX_OPEN(pal_options) | O_CLOEXEC;
 
     if (strcmp(type, URI_TYPE_FILE))
-        return -PAL_ERROR_INVAL;
+        return PAL_ERROR_INVAL;
 
     /* normalize uri into normpath */
     size_t normpath_size = strlen(uri) + 1;
     char* normpath = malloc(normpath_size);
     if (!normpath)
-        return -PAL_ERROR_NOMEM;
+        return PAL_ERROR_NOMEM;
 
     if (!get_norm_path(uri, normpath, &normpath_size)) {
         log_warning("Could not normalize path (%s)", uri);
         free(normpath);
-        return -PAL_ERROR_DENIED;
+        return PAL_ERROR_DENIED;
     }
 
     /* create file PAL handle with path string placed at the end of this handle object */
     hdl = calloc(1, HANDLE_SIZE(file));
     if (!hdl) {
         free(normpath);
-        return -PAL_ERROR_NOMEM;
+        return PAL_ERROR_NOMEM;
     }
 
     init_handle_hdr(hdl, PAL_TYPE_FILE);
@@ -107,7 +107,7 @@ static int file_open(PAL_HANDLE* handle, const char* type, const char* uri,
             if (get_file_check_policy() != FILE_CHECK_POLICY_ALLOW_ALL_BUT_LOG) {
                 log_warning("Disallowing access to file '%s'; file is not trusted or allowed.",
                             hdl->file.realpath);
-                ret = -PAL_ERROR_DENIED;
+                ret = PAL_ERROR_DENIED;
                 goto fail;
             }
             log_warning("Allowing access to unknown file '%s' due to file_check_policy settings.",
@@ -119,7 +119,7 @@ static int file_open(PAL_HANDLE* handle, const char* type, const char* uri,
                                || (pal_access == PAL_ACCESS_RDWR)
                                || (pal_access == PAL_ACCESS_WRONLY))) {
         log_error("Disallowing create/write/append to a trusted file '%s'", hdl->file.realpath);
-        ret = -PAL_ERROR_DENIED;
+        ret = PAL_ERROR_DENIED;
         goto fail;
     }
 
@@ -219,7 +219,7 @@ static int64_t file_write(PAL_HANDLE handle, uint64_t offset, uint64_t count, co
     /* case of trusted file: disallow writing completely */
     assert(handle->file.chunk_hashes);
     log_warning("Writing to a trusted file (%s) is disallowed!", handle->file.realpath);
-    return -PAL_ERROR_DENIED;
+    return PAL_ERROR_DENIED;
 }
 
 static void file_destroy(PAL_HANDLE handle) {
@@ -244,150 +244,10 @@ static void file_destroy(PAL_HANDLE handle) {
 
 static int file_delete(PAL_HANDLE handle, enum pal_delete_mode delete_mode) {
     if (delete_mode != PAL_DELETE_ALL)
-        return -PAL_ERROR_INVAL;
+        return PAL_ERROR_INVAL;
 
     int ret = ocall_delete(handle->file.realpath);
     return ret < 0 ? unix_to_pal_error(ret) : 0;
-}
-
-static int file_map(PAL_HANDLE handle, void* addr, pal_prot_flags_t prot, uint64_t offset,
-                    uint64_t size) {
-    assert(IS_ALLOC_ALIGNED(offset) && IS_ALLOC_ALIGNED(size));
-    int ret;
-
-    uint64_t dummy;
-    if (__builtin_add_overflow(offset, size, &dummy)) {
-        return -PAL_ERROR_INVAL;
-    }
-
-    if (size > SIZE_MAX) {
-        /* for compatibility with 32-bit systems */
-        return -PAL_ERROR_INVAL;
-    }
-
-    if (!(prot & PAL_PROT_WRITECOPY) && (prot & PAL_PROT_WRITE)) {
-        log_warning(
-            "file_map does not currently support writable pass-through mappings on SGX. You "
-            "may add the PAL_PROT_WRITECOPY (MAP_PRIVATE) flag to your file mapping to keep "
-            "the writes inside the enclave but they won't be reflected outside of the "
-            "enclave.");
-        return -PAL_ERROR_DENIED;
-    }
-
-    /* Sanity checks. */
-    if (!addr || !sgx_is_completely_within_enclave(addr, size)) {
-        return -PAL_ERROR_INVAL;
-    }
-
-    if (g_pal_linuxsgx_state.edmm_enabled) {
-        /* Enclave pages will be written to below, so we must add W permission. */
-        ret = sgx_edmm_add_pages((uint64_t)addr, size / PAGE_SIZE,
-                                 PAL_TO_SGX_PROT(prot | PAL_PROT_WRITE));
-        if (ret < 0) {
-            return ret;
-        }
-    } else {
-#ifdef ASAN
-        asan_unpoison_region((uintptr_t)addr, size);
-#endif
-    }
-
-    if (handle->file.trusted) {
-        /* case of trusted file: already mmaped in umem, copy from there into enclave memory and
-         * verify hashes along the way */
-        assert(handle->file.chunk_hashes);
-
-        off_t end = MIN(offset + size, handle->file.size);
-        size_t bytes_filled;
-        if ((off_t)offset >= end) {
-            /* file is mmapped at offset beyond file size, there are no trusted-file contents to
-             * back mmapped enclave pages; this is a legit case, so simply zero out these enclave
-             * pages and return success */
-            bytes_filled = 0;
-        } else {
-            off_t aligned_offset = ALIGN_DOWN(offset, TRUSTED_CHUNK_SIZE);
-            off_t aligned_end    = ALIGN_UP(end, TRUSTED_CHUNK_SIZE);
-            off_t total_size     = aligned_end - aligned_offset;
-
-            if ((uint64_t)total_size > SIZE_MAX) {
-                /* for compatibility with 32-bit systems */
-                ret = -PAL_ERROR_INVAL;
-                goto out;
-            }
-
-            assert(handle->file.size && handle->file.umem);
-            ret = copy_and_verify_trusted_file(handle->file.realpath, addr, handle->file.umem,
-                                               aligned_offset, aligned_end, offset, end,
-                                               handle->file.chunk_hashes, handle->file.size);
-            if (ret < 0) {
-                log_error("file_map - copy & verify on trusted file: %s", pal_strerror(ret));
-                goto out;
-            }
-
-            bytes_filled = end - offset;
-        }
-
-        if (size > bytes_filled) {
-            /* file ended before all mmapped memory was filled -- remaining memory must be zeroed */
-            memset((char*)addr + bytes_filled, 0, size - bytes_filled);
-        }
-    } else {
-        /* case of allowed file: simply read from underlying file descriptor into enclave memory */
-        assert(!handle->file.chunk_hashes);
-
-        size_t bytes_read = 0;
-        while (bytes_read < size) {
-            size_t read_size = MIN(size - bytes_read, MAX_READ_SIZE);
-            ssize_t bytes = ocall_pread(handle->file.fd, (char*)addr + bytes_read, read_size,
-                                        offset + bytes_read);
-            if (bytes > 0) {
-                bytes_read += bytes;
-            } else if (bytes == 0) {
-                break; /* EOF */
-            } else if (bytes == -EINTR || bytes == -EAGAIN) {
-                continue;
-            } else {
-                log_warning("file_map - ocall_pread on allowed file returned %ld", bytes);
-                ret = unix_to_pal_error(bytes);
-                goto out;
-            }
-        }
-
-        if (size > bytes_read) {
-            /* file ended before all mmapped memory was filled -- remaining memory must be zeroed */
-            memset((char*)addr + bytes_read, 0, size - bytes_read);
-        }
-    }
-
-    if (g_pal_linuxsgx_state.edmm_enabled && !(prot & PAL_PROT_WRITE)) {
-        /* Clear W permission, in case we added it artificially. */
-        ret = sgx_edmm_set_page_permissions((uint64_t)addr, size / PAGE_SIZE,
-                                            PAL_TO_SGX_PROT(prot));
-        if (ret < 0) {
-            log_error("failed to remove W bit from pages permissions at %p-%p",
-                      (char*)addr, (char*)addr + size);
-            goto out;
-        }
-    }
-
-    ret = 0;
-
-out:
-    if (ret < 0) {
-        if (g_pal_linuxsgx_state.edmm_enabled) {
-            int tmp_ret = sgx_edmm_remove_pages((uint64_t)addr, size / PAGE_SIZE);
-            if (tmp_ret < 0) {
-                log_error("removing previously allocated pages failed: %s (%d)",
-                          pal_strerror(tmp_ret), ret);
-                die_or_inf_loop();
-            }
-        } else {
-#ifdef ASAN
-            asan_poison_region((uintptr_t)addr, size, ASAN_POISON_USER);
-#endif
-        }
-    }
-    return ret;
 }
 
 static int file_setlength(PAL_HANDLE handle, uint64_t length) {
@@ -406,7 +266,7 @@ static int file_flush(PAL_HANDLE handle) {
 
 static int file_attrquery(const char* type, const char* uri, PAL_STREAM_ATTR* attr) {
     if (strcmp(type, URI_TYPE_FILE) && strcmp(type, URI_TYPE_DIR))
-        return -PAL_ERROR_INVAL;
+        return PAL_ERROR_INVAL;
 
     /* open with O_NONBLOCK to avoid blocking the current thread if it is actually a FIFO pipe */
     int fd = ocall_open(uri, O_NONBLOCK, 0);
@@ -445,11 +305,11 @@ static int file_attrsetbyhdl(PAL_HANDLE handle, PAL_STREAM_ATTR* attr) {
 
 static int file_rename(PAL_HANDLE handle, const char* type, const char* uri) {
     if (strcmp(type, URI_TYPE_FILE))
-        return -PAL_ERROR_INVAL;
+        return PAL_ERROR_INVAL;
 
     char* tmp = strdup(uri);
     if (!tmp)
-        return -PAL_ERROR_NOMEM;
+        return PAL_ERROR_NOMEM;
 
     int ret = ocall_rename(handle->file.realpath, uri);
     if (ret < 0) {
@@ -468,14 +328,14 @@ static int dir_open(PAL_HANDLE* handle, const char* type, const char* uri, enum 
     __UNUSED(access);
 
     if (strcmp(type, URI_TYPE_DIR))
-        return -PAL_ERROR_INVAL;
+        return PAL_ERROR_INVAL;
 
     if (create == PAL_CREATE_TRY || create == PAL_CREATE_ALWAYS) {
         int ret = ocall_mkdir(uri, share);
 
         if (ret < 0) {
             if (ret == -EEXIST && create == PAL_CREATE_ALWAYS)
-                return -PAL_ERROR_STREAMEXIST;
+                return PAL_ERROR_STREAMEXIST;
             if (ret != -EEXIST)
                 return unix_to_pal_error(ret);
             assert(ret == -EEXIST && create == PAL_CREATE_TRY);
@@ -489,7 +349,7 @@ static int dir_open(PAL_HANDLE* handle, const char* type, const char* uri, enum 
     PAL_HANDLE hdl = calloc(1, HANDLE_SIZE(dir));
     if (!hdl) {
         ocall_close(fd);
-        return -PAL_ERROR_NOMEM;
+        return PAL_ERROR_NOMEM;
     }
 
     init_handle_hdr(hdl, PAL_TYPE_DIR);
@@ -501,7 +361,7 @@ static int dir_open(PAL_HANDLE* handle, const char* type, const char* uri, enum 
     if (!path) {
         ocall_close(fd);
         free(hdl);
-        return -PAL_ERROR_NOMEM;
+        return PAL_ERROR_NOMEM;
     }
 
     hdl->dir.realpath    = path;
@@ -520,7 +380,7 @@ static int64_t dir_read(PAL_HANDLE handle, uint64_t offset, size_t count, void* 
     char* buf            = (char*)_buf;
 
     if (offset) {
-        return -PAL_ERROR_INVAL;
+        return PAL_ERROR_INVAL;
     }
 
     if (handle->dir.endofstream) {
@@ -563,7 +423,7 @@ static int64_t dir_read(PAL_HANDLE handle, uint64_t offset, size_t count, void* 
         if (!handle->dir.buf) {
             handle->dir.buf = malloc(DIRBUF_SIZE);
             if (!handle->dir.buf) {
-                return -PAL_ERROR_NOMEM;
+                return PAL_ERROR_NOMEM;
             }
         }
 
@@ -608,7 +468,7 @@ static void dir_destroy(PAL_HANDLE handle) {
 
 static int dir_delete(PAL_HANDLE handle, enum pal_delete_mode delete_mode) {
     if (delete_mode != PAL_DELETE_ALL)
-        return -PAL_ERROR_INVAL;
+        return PAL_ERROR_INVAL;
 
     int ret = ocall_delete(handle->dir.realpath);
     return ret < 0 ? unix_to_pal_error(ret) : 0;
@@ -616,11 +476,11 @@ static int dir_delete(PAL_HANDLE handle, enum pal_delete_mode delete_mode) {
 
 static int dir_rename(PAL_HANDLE handle, const char* type, const char* uri) {
     if (strcmp(type, URI_TYPE_DIR))
-        return -PAL_ERROR_INVAL;
+        return PAL_ERROR_INVAL;
 
     char* tmp = strdup(uri);
     if (!tmp)
-        return -PAL_ERROR_NOMEM;
+        return PAL_ERROR_NOMEM;
 
     int ret = ocall_rename(handle->dir.realpath, uri);
     if (ret < 0) {
@@ -639,7 +499,6 @@ struct handle_ops g_file_ops = {
     .write          = &file_write,
     .destroy        = &file_destroy,
     .delete         = &file_delete,
-    .map            = &file_map,
     .setlength      = &file_setlength,
     .flush          = &file_flush,
     .attrquery      = &file_attrquery,

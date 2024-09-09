@@ -1,4 +1,3 @@
-loader.entrypoint = "file:{{ gramine.libos }}"
 libos.entrypoint = "{{ entrypoint }}"
 
 loader.env.LD_LIBRARY_PATH = "/lib:{{ arch_libdir }}:/usr/{{ arch_libdir }}"
@@ -24,16 +23,16 @@ fs.mounts = [
 sgx.max_threads = {{ '1' if env.get('EDMM', '0') == '1' else '16' }}
 sgx.debug = true
 sgx.edmm_enable = {{ 'true' if env.get('EDMM', '0') == '1' else 'false' }}
+sgx.use_exinfo = {{ 'true' if env.get('EDMM', '0') == '1' else 'false' }}
 
 sgx.allowed_files = [
   "file:tmp/",
   "file:root",     # for getdents test
-  "file:testfile", # for mmap_file test
+  "file:testfile", # for large_mmap test
   "file:scripts/", # for exec_script test
 ]
 
 sgx.trusted_files = [
-  "file:{{ gramine.libos }}",
   "file:{{ gramine.runtimedir(libc) }}/",
   "file:{{ arch_libdir }}/libgcc_s.so.1",
   "file:/usr{{ arch_libdir }}/libstdc++.so.6",

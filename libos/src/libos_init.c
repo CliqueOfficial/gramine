@@ -42,43 +42,42 @@ noreturn void libos_abort(void) {
     PalProcessExit(1);
 }
 
-static unsigned pal_errno_to_unix_errno_table[PAL_ERROR_NATIVE_COUNT + 1] = {
-    [PAL_ERROR_SUCCESS]         = 0,
-    [PAL_ERROR_NOTIMPLEMENTED]  = ENOSYS,
-    [PAL_ERROR_NOTDEFINED]      = ENOSYS,
-    [PAL_ERROR_NOTSUPPORT]      = EACCES,
-    [PAL_ERROR_INVAL]           = EINVAL,
-    [PAL_ERROR_TOOLONG]         = ENAMETOOLONG,
-    [PAL_ERROR_DENIED]          = EACCES,
-    [PAL_ERROR_BADHANDLE]       = EBADF,
-    [PAL_ERROR_STREAMEXIST]     = EEXIST,
-    [PAL_ERROR_STREAMNOTEXIST]  = ENOENT,
-    [PAL_ERROR_STREAMISFILE]    = ENOTDIR,
-    [PAL_ERROR_STREAMISDIR]     = EISDIR,
-    [PAL_ERROR_STREAMISDEVICE]  = ESPIPE,
-    [PAL_ERROR_INTERRUPTED]     = EINTR,
-    [PAL_ERROR_OVERFLOW]        = EFAULT,
-    [PAL_ERROR_BADADDR]         = EFAULT,
-    [PAL_ERROR_NOMEM]           = ENOMEM,
-    [PAL_ERROR_INCONSIST]       = EFAULT,
-    [PAL_ERROR_TRYAGAIN]        = EAGAIN,
-    [PAL_ERROR_NOTSERVER]       = EINVAL,
-    [PAL_ERROR_NOTCONNECTION]   = ENOTCONN,
-    [PAL_ERROR_CONNFAILED]      = ECONNRESET,
-    [PAL_ERROR_ADDRNOTEXIST]    = EADDRNOTAVAIL,
-    [PAL_ERROR_AFNOSUPPORT]     = EAFNOSUPPORT,
-    [PAL_ERROR_CONNFAILED_PIPE] = EPIPE,
+#define IDX(x) [-(x)]
+static int pal_errno_to_unix_errno_table[PAL_ERROR_NATIVE_COUNT] = {
+    IDX(PAL_ERROR_SUCCESS)         = 0,
+    IDX(PAL_ERROR_NOTIMPLEMENTED)  = -ENOSYS,
+    IDX(PAL_ERROR_NOTDEFINED)      = -ENOSYS,
+    IDX(PAL_ERROR_NOTSUPPORT)      = -EACCES,
+    IDX(PAL_ERROR_INVAL)           = -EINVAL,
+    IDX(PAL_ERROR_TOOLONG)         = -ENAMETOOLONG,
+    IDX(PAL_ERROR_DENIED)          = -EACCES,
+    IDX(PAL_ERROR_BADHANDLE)       = -EBADF,
+    IDX(PAL_ERROR_STREAMEXIST)     = -EEXIST,
+    IDX(PAL_ERROR_STREAMNOTEXIST)  = -ENOENT,
+    IDX(PAL_ERROR_STREAMISFILE)    = -ENOTDIR,
+    IDX(PAL_ERROR_STREAMISDIR)     = -EISDIR,
+    IDX(PAL_ERROR_STREAMISDEVICE)  = -ESPIPE,
+    IDX(PAL_ERROR_INTERRUPTED)     = -EINTR,
+    IDX(PAL_ERROR_OVERFLOW)        = -EFAULT,
+    IDX(PAL_ERROR_BADADDR)         = -EFAULT,
+    IDX(PAL_ERROR_NOMEM)           = -ENOMEM,
+    IDX(PAL_ERROR_INCONSIST)       = -EFAULT,
+    IDX(PAL_ERROR_TRYAGAIN)        = -EAGAIN,
+    IDX(PAL_ERROR_NOTSERVER)       = -EINVAL,
+    IDX(PAL_ERROR_NOTCONNECTION)   = -ENOTCONN,
+    IDX(PAL_ERROR_CONNFAILED)      = -ECONNRESET,
+    IDX(PAL_ERROR_ADDRNOTEXIST)    = -EADDRNOTAVAIL,
+    IDX(PAL_ERROR_AFNOSUPPORT)     = -EAFNOSUPPORT,
+    IDX(PAL_ERROR_CONNFAILED_PIPE) = -EPIPE,
 };
+#undef IDX
 
-static unsigned long pal_to_unix_errno_positive(unsigned long err) {
-    return (err <= PAL_ERROR_NATIVE_COUNT) ? pal_errno_to_unix_errno_table[err] : EINVAL;
-}
+int pal_to_unix_errno(long err) {
+    long perr = -err;
 
-long pal_to_unix_errno(long err) {
-    if (err >= 0) {
-        return pal_to_unix_errno_positive((unsigned long)err);
-    }
-    return -pal_to_unix_errno_positive((unsigned long)-err);
+    assert(perr >= 0 && perr < PAL_ERROR_NATIVE_COUNT);
+
+    return pal_errno_to_unix_errno_table[perr];
 }
 
 bool g_received_user_memory = false;
@@ -407,6 +406,11 @@ noreturn void libos_init(const char* const* argv, const char* const* envp) {
     RUN_INIT(init_dcache);
     RUN_INIT(init_handle);
 
+    if (print_warnings_on_insecure_configs(!g_pal_public_state->parent_process) < 0) {
+        log_error("Cannot parse the manifest (while checking for insecure configurations)");
+        PalProcessExit(1);
+    }
+
     log_debug("LibOS loaded at %p, ready to initialize", &__load_address);
 
     if (g_pal_public_state->parent_process) {
@@ -503,6 +507,7 @@ noreturn void libos_init(const char* const* argv, const char* const* envp) {
              strlen(g_pal_public_state->dns_host.hostname));
 
     RUN_INIT(init_eventfd_mode);
+    RUN_INIT(init_syscalls);
 
     log_debug("LibOS initialized");
 
@@ -569,7 +574,7 @@ int create_pipe(char* name, char* uri, size_t size, PAL_HANDLE* hdl, bool use_vm
         ret = PalStreamOpen(uri, PAL_ACCESS_RDWR, /*share_flags=*/0, PAL_CREATE_IGNORED,
                             /*options=*/0, &pipe);
         if (ret < 0) {
-            if (!use_vmid_for_name && ret == -PAL_ERROR_STREAMEXIST) {
+            if (!use_vmid_for_name && ret == PAL_ERROR_STREAMEXIST) {
                 /* tried to create a pipe with random name but it already exists */
                 continue;
             }

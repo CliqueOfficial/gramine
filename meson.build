@@ -243,6 +243,7 @@ mbedtls_pal_dep = mbedtls_proj.get_variable('mbedtls_pal_dep')
 
 curl_proj = subproject('curl-8.8.0')
 cjson_proj = subproject('cJSON-1.7.12')
+libcbor_proj = subproject('libcbor-0.11.0')
 
 if sgx
     # XXX: do not call subproject() from under "if sgx" conditional, because it
@@ -264,6 +265,11 @@ if sgx
     cjson_dep = cjson_proj.get_variable('cjson_dep')
 
     protobuf_dep = dependency('libprotobuf-c')
+
+    # NOTE: For libcbor build we use a custom_target (see subprojects/packagefiles/libcbor), because
+    #       CMake integration in Meson doesn't work correctly with PIC static libraries, see
+    #       https://github.com/mesonbuild/meson/issues/10764.
+    libcbor_dep = libcbor_proj.get_variable('libcbor_dep')
 
     if dcap
         sgx_dcap_quoteverify_dep = cc.find_library('sgx_dcap_quoteverify')
@@ -295,9 +301,9 @@ subdir('python')
 subdir('tools')
 
 if get_option('libc') == 'glibc'
-    subproject('glibc-2.39-1')
+    subproject('glibc-2.40-1')
 elif get_option('libc') == 'musl'
-    subproject('musl-1.2.4')
+    subproject('musl-1.2.5')
 endif
 
 if enable_libgomp
@@ -305,3 +311,14 @@ if enable_libgomp
 endif
 
 run_target('clang-format', command: [meson_clang_format_prog])
+
+conf = configuration_data()
+conf.set('PATH', get_option('prefix') / get_option('bindir'))
+conf.set('LD_LIBRARY_PATH', get_option('prefix') / get_option('libdir'))
+conf.set('PKG_CONFIG_PATH', get_option('prefix') / get_option('libdir') / 'pkgconfig')
+conf.set('PYTHONPATH', python3_platlib)
+configure_file(
+    input: 'scripts/activate.sh.in',
+    output: 'activate.sh',
+    configuration: conf,
+)

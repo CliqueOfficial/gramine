@@ -69,19 +69,30 @@ Loader entrypoint
 
 ::
 
-   loader.entrypoint = "[URI]"
+   loader.entrypoint.uri = "[URI]"
    (Default: "<path to libsysdb.so>")
 
-This specifies the LibOS component that Gramine will load and run before loading
-the first executable of the user application. **Note**: currently, there is only
-one LibOS implementation: ``libsysdb.so``, and there is no need to specify this
-option explicitly.
+   loader.entrypoint.sha256 = "[HASH]"
+
+``loader.entrypoint.uri`` specifies the LibOS component that Gramine will load
+and run before loading the first executable of the user application. **Note**:
+currently, there is only one LibOS implementation: ``libsysdb.so``, and there is
+no need to specify this option explicitly.
+
+Additionally, the loader entrypoint is cryptographically hashed at build time.
+At startup, Gramine verifies that the entrypoint's hash matches what is stored
+in the manifest in ``loader.entrypoint.sha256``. The signer tool will
+automatically generate the hash of this file and add it to the SGX-specific
+manifest (``.manifest.sgx``). The manifest writer may also explicitly specify
+the hash; in this case, hashing of the file will be skipped by the signer tool
+and the value in ``loader.entrypoint.sha256`` will be used instead.
 
 Note that the loader (the PAL binary) loads the LibOS binary specified in
 ``loader.entrypoint`` and passes control to this binary. Next, the LibOS binary
 loads the actual executable (the user application) specified in
 ``libos.entrypoint``. Also note that, in contrast to ``libos.entrypoint``, the
-``loader.entrypoint`` option specifies a PAL URI (with the ``file:`` prefix).
+``loader.entrypoint.uri`` option specifies a PAL URI (with the ``file:``
+prefix).
 
 .. _libos-entrypoint:
 
@@ -297,6 +308,21 @@ may improve performance for certain workloads but may also generate
 ``SIGSEGV/SIGBUS`` exceptions for some applications that specifically use
 invalid pointers (though this is not expected for most real-world applications).
 
+.. _sys-fds-limit:
+
+Limit on open file descriptors
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+::
+
+    sys.fds.limit = [NUM]
+    (default: 900)
+
+This specifies the maximum number of open file descriptors in the Gramine
+process. More specifically, this option sets the ``RLIMIT_NOFILE`` resource
+limit: it specifies a value one greater than the maximum file descriptor number
+that can be opened by the Gramine process.
+
 .. _stack-size:
 
 Stack size
@@ -390,6 +416,58 @@ Python). Could be useful in SGX environments: child processes consume
    option if you want to somehow mitigate running untrusted enclaves. Instead,
    to achieve this, you need to run the whole Gramine inside a proper security
    sandbox.
+
+Mocking syscalls
+^^^^^^^^^^^^^^^^
+
+::
+
+    sys.debug__mock_syscalls = [
+      { name = "syscall_name1", return = 0 },   # no-op syscall
+      { name = "syscall_name2", return = -38 }, # denied syscall (ENOSYS)
+    ]
+
+This syntax specifies the system calls that are mocked when executed in
+Gramine (i.e. they return a specified value without any other side effects).
+If ``return`` field is skipped, then the default value is ``0`` (no-op).
+
+Be warned that returning a success (e.g. ``0``) but skipping the possible side
+effects of the syscall may introduce bugs to the application, if the application
+expects these side effects (e.g. mocking the ``futex`` syscall may lead to
+silent introduction of race conditions or hangs).
+
+As one example, to skip ``sched_yield`` syscall, specify::
+
+    sys.debug__mock_syscalls = [
+      { name = "sched_yield", return = 0 },
+    ]
+
+As another example, to disallow eventfd completely, specify::
+
+    sys.debug__mock_syscalls = [
+      { name = "eventfd",  return = -38 },
+      { name = "eventfd2", return = -38 },
+    ]
+
+
+.. note ::
+   This option is *not* a replacement for ``sys.disallow_subprocesses`` (see
+   above). This is because the ``clone()`` syscall has two usages: (1) it is
+   used to spawn subprocesses by Glibc and many other libraries and runtimes and
+   (2) it is also used to create threads in the same process. The
+   ``sys.disallow_subprocesses`` manifest option disables only the first usage,
+   whereas ``sys.debug__mock_syscalls = [ { name = "clone", ... } ]`` disables
+   both usages.
+
+.. warning ::
+   This option is *not* a security feature. Its rationale is improving
+   performance (the example of ``sched_yield``), mocking syscalls currently not
+   implemented in Gramine, and limiting syscalls exposed to the app.
+
+.. warning ::
+   If used incorrectly, this option may break syscall semantics and make your
+   application unsound! This option is for advanced users only and for
+   experimenting/debugging.
 
 Root FS mount point
 ^^^^^^^^^^^^^^^^^^^
@@ -1307,3 +1385,15 @@ In addition, the application manifest must also contain ``sgx.debug = true``.
    independently.
 
 See :ref:`vtune-sgx-profiling` for more information.
+
+Deprecated options
+------------------
+
+Loader entrypoint (deprecated syntax)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+::
+
+   loader.entrypoint = "[URI]"
+
+This syntax was renamed to ``loader.entrypoint.uri``.

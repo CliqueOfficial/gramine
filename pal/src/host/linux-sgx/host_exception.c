@@ -9,13 +9,6 @@
 
 #include <stddef.h> /* needed by <linux/signal.h> for size_t */
 
-#include "sigset.h" /* FIXME: this include can't be sorted, otherwise we get:
-                     * In file included from sgx_exception.c:19:0:
-                     * ../../../include/arch/x86_64/linux/ucontext.h:136:5: error: unknown type name ‘__sigset_t’
-                     *      __sigset_t uc_sigmask;
-                     */
-
-
 #include <linux/signal.h>
 #include <stdbool.h>
 
@@ -25,6 +18,7 @@
 #include "host_internal.h"
 #include "pal_rpc_queue.h"
 #include "sigreturn.h"
+#include "sigset.h"
 #include "ucontext.h"
 
 static const int ASYNC_SIGNALS[] = {SIGTERM, SIGCONT};
@@ -188,6 +182,18 @@ static void handle_dummy_signal(int signum, siginfo_t* info, struct ucontext* uc
     /* we need this handler to interrupt blocking syscalls in RPC threads */
 }
 
+#ifdef DEBUG
+static void handle_sigusr1(int signum, siginfo_t* info, struct ucontext* uc) {
+    __UNUSED(signum);
+    __UNUSED(info);
+    __UNUSED(uc);
+
+    if (g_pal_enclave.profile_enable) {
+        __atomic_store_n(&g_trigger_profile_reinit, true, __ATOMIC_RELEASE);
+    }
+}
+#endif /* DEBUG */
+
 int sgx_signal_setup(void) {
     int ret;
 
@@ -225,6 +231,12 @@ int sgx_signal_setup(void) {
     ret = set_signal_handler(SIGCONT, handle_async_signal);
     if (ret < 0)
         goto err;
+
+#ifdef DEBUG
+    ret = set_signal_handler(SIGUSR1, handle_sigusr1);
+    if (ret < 0)
+        goto err;
+#endif /* DEBUG */
 
     /* SIGUSR2 is reserved for Gramine usage: interrupting blocking syscalls in RPC threads.
      * We block SIGUSR2 in enclave threads; it is unblocked by each RPC thread explicitly. */

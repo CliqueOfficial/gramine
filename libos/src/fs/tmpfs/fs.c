@@ -271,17 +271,10 @@ static ssize_t tmpfs_write(struct libos_handle* hdl, const void* buf, size_t siz
     inode->mtime = time_us / USEC_IN_SEC;
     /* keep `ret` */
 
+    size_t new_size = inode->size;
     unlock(&inode->lock);
 
-    /* If there are any MAP_SHARED mappings for the file, this will read data from `hdl`. */
-    if (__atomic_load_n(&hdl->inode->num_mmapped, __ATOMIC_ACQUIRE) != 0) {
-        int reload_ret = reload_mmaped_from_file_handle(hdl);
-        if (reload_ret < 0) {
-            log_error("reload mmapped regions of file failed: %s", unix_strerror(reload_ret));
-            BUG();
-        }
-    }
-
+    refresh_mappings_on_file(hdl, new_size, /*reload_file_contents=*/true);
     return ret;
 }
 
@@ -296,16 +289,17 @@ static int tmpfs_truncate(struct libos_handle* hdl, file_off_t size) {
     struct libos_mem_file* mem = hdl->inode->data;
 
     ret = mem_file_truncate(mem, size);
-    if (ret < 0)
-        goto out;
+    if (ret < 0) {
+        unlock(&hdl->inode->lock);
+        return ret;
+    }
 
     hdl->inode->mtime = time_us / USEC_IN_SEC;
     hdl->inode->size = size;
-    ret = 0;
-
-out:
     unlock(&hdl->inode->lock);
-    return ret;
+
+    refresh_mappings_on_file(hdl, size, /*reload_file_contents=*/false);
+    return 0;
 }
 
 struct libos_fs_ops tmp_fs_ops = {

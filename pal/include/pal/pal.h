@@ -134,12 +134,16 @@ struct pal_dns_host_conf {
 struct pal_public_state {
     uint64_t instance_id;
     const char* host_type;
-    const char* attestation_type; /* currently only for Linux-SGX */
+
+    /*
+     * Related to confidential computing (currently only for Linux-SGX PAL)
+     */
+    bool confidential_computing;
+    const char* attestation_type;
 
     /*
      * Handles and executables
      */
-
     toml_table_t* manifest_root; /*!< program manifest */
     PAL_HANDLE parent_process;   /*!< handle of parent process */
     PAL_HANDLE first_thread;     /*!< handle of first thread */
@@ -414,19 +418,20 @@ enum pal_delete_mode {
 int PalStreamDelete(PAL_HANDLE handle, enum pal_delete_mode delete_mode);
 
 /*!
- * \brief Map a file to a virtual memory address in the current process.
+ * \brief Map a device to a virtual memory address in the current process.
  *
- * \param handle  Handle to the stream to be mapped.
+ * \param handle  Handle to the device to be mapped.
  * \param addr    See #PalVirtualMemoryAlloc.
  * \param prot    See #PalVirtualMemoryAlloc.
- * \param offset  Offset in the stream to be mapped. Must be properly aligned.
+ * \param offset  Offset in the device handle to be mapped. Must be properly aligned.
  * \param size    Size of the requested mapping. Must be non-zero and properly aligned.
  *
  * \returns 0 on success, negative error code on failure.
  *
- * Use `PalVirtualMemoryFree` to unmap the file.
+ * Currently used only by devices (to establish shared memory on device); files emulate this via
+ * `PalStreamRead` and `PalStreamWrite`. Use `PalVirtualMemoryFree` to unmap this mapping.
  */
-int PalStreamMap(PAL_HANDLE handle, void* addr, pal_prot_flags_t prot, uint64_t offset,
+int PalDeviceMap(PAL_HANDLE handle, void* addr, pal_prot_flags_t prot, uint64_t offset,
                  size_t size);
 
 /*!
@@ -985,7 +990,7 @@ int PalAttestationQuote(const void* user_report_data, size_t user_report_data_si
  * such keys: `_sgx_mrenclave` and `_sgx_mrsigner` (see macros below).
  *
  * If a given key is not supported by the current PAL host, the function will return
- * -PAL_ERROR_NOTIMPLEMENTED.
+ * PAL_ERROR_NOTIMPLEMENTED.
  */
 int PalGetSpecialKey(const char* name, void* key, size_t* key_size);
 

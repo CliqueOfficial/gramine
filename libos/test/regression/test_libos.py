@@ -11,6 +11,7 @@ import tomli
 
 from graminelibos.regression import (
     HAS_AVX,
+    HAS_EDMM,
     HAS_SGX,
     IS_VM,
     ON_X86,
@@ -817,30 +818,31 @@ class TC_30_Syscall(RegressionTestCase):
 
         self.assertIn('Test successful!', stdout)
 
-    def test_050_mmap(self):
-        stdout, _ = self.run_binary(['mmap_file'], timeout=60)
+    def _prepare_mmap_file_sigbus_files(self):
+        read_path = 'tmp/__mmaptestreadfile__'
+        if not os.path.exists(read_path):
+            with open(read_path, "wb") as f:
+                f.truncate(os.sysconf("SC_PAGE_SIZE"))
+        write_path = 'tmp/__mmaptestfilewrite__'
+        if os.path.exists(write_path):
+            os.unlink(write_path)
+        return read_path, write_path
 
-        # Private mmap beyond file range
-        self.assertIn('mmap test 6 passed', stdout)
-        self.assertIn('mmap test 7 passed', stdout)
+    @unittest.skipIf(HAS_SGX and not HAS_EDMM,
+        'On SGX without EDMM, SIGBUS cannot be triggered for lack of dynamic memory protection.')
+    def test_050_mmap_file_sigbus(self):
+        read_path, write_path = self._prepare_mmap_file_sigbus_files()
+        stdout, _ = self.run_binary(['mmap_file_sigbus', read_path, write_path, 'nofork'])
+        self.assertIn('TEST OK', stdout)
 
-        # Private mmap beyond file range (after fork)
-        self.assertIn('mmap test 1 passed', stdout)
-        self.assertIn('mmap test 2 passed', stdout)
-        self.assertIn('mmap test 3 passed', stdout)
-        self.assertIn('mmap test 4 passed', stdout)
-
-        # "test 5" and "test 8" are checked below, in test_051_mmap_sgx
-
-    @unittest.skipIf(HAS_SGX,
-        'On SGX, SIGBUS isn\'t always implemented correctly, for lack '
-        'of memory protection. For now, some of these cases won\'t work.')
-    def test_051_mmap_sgx(self):
-        stdout, _ = self.run_binary(['mmap_file'], timeout=60)
-
-        # SIGBUS test
-        self.assertIn('mmap test 5 passed', stdout)
-        self.assertIn('mmap test 8 passed', stdout)
+    @unittest.skipIf(HAS_SGX and not HAS_EDMM,
+        'On SGX without EDMM, SIGBUS cannot be triggered for lack of dynamic memory protection.')
+    def test_051_mmap_file_sigbus_child(self):
+        read_path, write_path = self._prepare_mmap_file_sigbus_files()
+        stdout, _ = self.run_binary(['mmap_file_sigbus', read_path, write_path, 'fork'], timeout=60)
+        self.assertIn('PARENT OK', stdout)
+        self.assertIn('CHILD OK', stdout)
+        self.assertIn('TEST OK', stdout)
 
     @unittest.skipUnless(HAS_SGX,
         'Trusted files are only available with SGX')
@@ -1062,6 +1064,26 @@ class TC_30_Syscall(RegressionTestCase):
         stdout, _ = self.run_binary(['itimer'])
         self.assertIn("TEST OK", stdout)
 
+    def test_160_rlimit_nofile(self):
+        # uses manifest.template
+        stdout, _ = self.run_binary(['rlimit_nofile'])
+        self.assertIn("old RLIMIT_NOFILE soft limit: 900", stdout)
+        self.assertIn("(before setrlimit) opened fd: 899", stdout)
+        self.assertIn("new RLIMIT_NOFILE soft limit: 901", stdout)
+        self.assertIn("(in child, after setrlimit) opened fd: 900", stdout)
+        self.assertIn("(after setrlimit) opened fd: 900", stdout)
+        self.assertIn("TEST OK", stdout)
+
+    def test_161_rlimit_nofile_4k(self):
+        # uses rlimit_nofile_4k.manifest.template
+        stdout, _ = self.run_binary(['rlimit_nofile_4k'])
+        self.assertIn("old RLIMIT_NOFILE soft limit: 4096", stdout)
+        self.assertIn("(before setrlimit) opened fd: 4095", stdout)
+        self.assertIn("new RLIMIT_NOFILE soft limit: 4097", stdout)
+        self.assertIn("(in child, after setrlimit) opened fd: 4096", stdout)
+        self.assertIn("(after setrlimit) opened fd: 4096", stdout)
+        self.assertIn("TEST OK", stdout)
+
 class TC_31_Syscall(RegressionTestCase):
     def test_000_syscall_redirect(self):
         stdout, _ = self.run_binary(['syscall'])
@@ -1074,6 +1096,17 @@ class TC_31_Syscall(RegressionTestCase):
         self.assertIn('Handling signal 15', stdout)
         self.assertIn('Got: P', stdout)
         self.assertIn('TEST 2 OK', stdout)
+
+    def test_020_mock_syscalls(self):
+        stdout, stderr = self.run_binary(['mock_syscalls'])
+        self.assertIn('eventfd2(...) = -38 (mock)', stderr)
+        if USES_MUSL:
+            self.assertIn('fork(...) = -38 (mock)', stderr)
+        else:
+            self.assertIn('clone(...) = -38 (mock)', stderr)
+        self.assertIn('sched_yield(...) = 0 (mock)', stderr)
+        self.assertIn('vhangup(...) = 123 (mock)', stderr)
+        self.assertIn('TEST OK', stdout)
 
 class TC_40_FileSystem(RegressionTestCase):
     def test_000_proc(self):
@@ -1493,6 +1526,10 @@ class TC_80_Socket(RegressionTestCase):
         stdout, _ = self.run_binary(['pipe_ocloexec'])
         self.assertIn('TEST OK', stdout)
 
+    def test_093_pipe_race(self):
+        stdout, _ = self.run_binary(['pipe_race'])
+        self.assertIn('TEST OK', stdout)
+
     def test_095_mkfifo(self):
         try:
             stdout, _ = self.run_binary(['mkfifo'], timeout=60)
@@ -1571,4 +1608,10 @@ class TC_91_RdtscSGX(RegressionTestCase):
 class TC_92_avx(RegressionTestCase):
     def test_000_avx(self):
         stdout, _ = self.run_binary(['avx'])
+        self.assertIn('TEST OK', stdout)
+
+@unittest.skipUnless(ON_X86, 'x86-specific')
+class TC_93_In_Out(RegressionTestCase):
+    def test_000_in_out(self):
+        stdout, stderr = self.run_binary(['in_out_instruction'])
         self.assertIn('TEST OK', stdout)

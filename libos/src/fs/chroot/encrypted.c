@@ -292,8 +292,6 @@ out:
     return ret;
 }
 
-/* NOTE: this function is different from generic `chroot_unlink` only to add PAL_OPTION_PASSTHROUGH.
- * Once that option is removed, we can safely go back to using `chroot_unlink`. */
 static int chroot_encrypted_unlink(struct libos_dentry* dent) {
     assert(locked(&g_dcache_lock));
     assert(dent->inode);
@@ -490,17 +488,10 @@ static ssize_t chroot_encrypted_write(struct libos_handle* hdl, const void* buf,
     if (hdl->inode->size < *pos)
         hdl->inode->size = *pos;
 
+    size_t new_size = hdl->inode->size;
     unlock(&hdl->inode->lock);
 
-    /* If there are any MAP_SHARED mappings for the file, this will read data from `enc`. */
-    if (__atomic_load_n(&hdl->inode->num_mmapped, __ATOMIC_ACQUIRE) != 0) {
-        ret = reload_mmaped_from_file_handle(hdl);
-        if (ret < 0) {
-            log_error("reload mmapped regions of file failed: %s", unix_strerror(ret));
-            BUG();
-        }
-    }
-
+    refresh_mappings_on_file(hdl, new_size, /*reload_file_contents=*/true);
     return (ssize_t)actual_count;
 }
 
@@ -517,11 +508,16 @@ static int chroot_encrypted_truncate(struct libos_handle* hdl, file_off_t size) 
 
     lock(&hdl->inode->lock);
     ret = encrypted_file_set_size(enc, size);
-    if (ret == 0)
-        hdl->inode->size = size;
+    if (ret < 0) {
+        unlock(&hdl->inode->lock);
+        return ret;
+    }
+
+    hdl->inode->size = size;
     unlock(&hdl->inode->lock);
 
-    return ret;
+    refresh_mappings_on_file(hdl, size, /*reload_file_contents=*/false);
+    return 0;
 }
 
 static int chroot_encrypted_stat(struct libos_dentry* dent, struct stat* buf) {

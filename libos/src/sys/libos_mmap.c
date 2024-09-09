@@ -248,14 +248,23 @@ void* libos_syscall_mmap(void* addr, size_t length, int prot, int flags, int fd,
     if (!hdl) {
         ret = PalVirtualMemoryAlloc(addr, length, LINUX_PROT_TO_PAL(prot, flags));
         if (ret < 0) {
-            if (ret == -PAL_ERROR_DENIED) {
+            if (ret == PAL_ERROR_DENIED) {
                 ret = -EPERM;
             } else {
                 ret = pal_to_unix_errno(ret);
             }
         }
     } else {
-        ret = hdl->fs->fs_ops->mmap(hdl, addr, length, prot, flags, offset);
+        size_t valid_length;
+        ret = hdl->fs->fs_ops->mmap(hdl, addr, length, prot, flags, offset, &valid_length);
+        if (ret == 0) {
+            int update_valid_length_ret = bkeep_vma_update_valid_length(addr, valid_length);
+            if (update_valid_length_ret < 0) {
+                log_error("[mmap] Failed to update valid length to %lu of bookkeeped memory %p-%p!",
+                          valid_length, addr, (char*)addr + length);
+                BUG();
+            }
+        }
     }
 
     if (ret < 0) {
@@ -539,10 +548,6 @@ long libos_syscall_msync(unsigned long start, size_t len_orig, int flags) {
         return -ENOSYS;
     }
 
-    if (flags & MS_SYNC) {
-        return msync_range(start, start + len);
-    } else {
-        /* `MS_ASYNC` is a no-op on Linux. */
-        return 0;
-    }
+    /* `MS_ASYNC` is emulated as `MS_SYNC`; this sacrifices performance for correctness. */
+    return msync_range(start, start + len);
 }

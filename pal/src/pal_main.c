@@ -68,7 +68,7 @@ static int get_env_value_from_manifest(toml_table_t* toml_envs, const char* key,
 
         ret = toml_rtos(toml_env_val_raw, out_val);
         if (ret < 0)
-            return -PAL_ERROR_NOMEM;
+            return PAL_ERROR_NOMEM;
 
         *out_passthrough = false;
         *out_exists = true;
@@ -80,18 +80,18 @@ static int get_env_value_from_manifest(toml_table_t* toml_envs, const char* key,
 
     if (toml_passthrough_raw && toml_value_raw) {
         /* disallow `loader.env.key = { passthrough = true, value = "val" }` */
-        return -PAL_ERROR_INVAL;
+        return PAL_ERROR_INVAL;
     }
 
     if (!toml_passthrough_raw) {
         /* not passthrough like `loader.env.key = { passthrough = true }`, must be value-table like
          * `loader.env.key = { value = "val" }` */
         if (!toml_value_raw)
-            return -PAL_ERROR_INVAL;
+            return PAL_ERROR_INVAL;
 
         ret = toml_rtos(toml_value_raw, out_val);
         if (ret < 0)
-            return -PAL_ERROR_NOMEM;
+            return PAL_ERROR_NOMEM;
 
         *out_passthrough = false;
         *out_exists = true;
@@ -102,7 +102,7 @@ static int get_env_value_from_manifest(toml_table_t* toml_envs, const char* key,
     int passthrough_int;
     ret = toml_rtob(toml_passthrough_raw, &passthrough_int);
     if (ret < 0)
-        return -PAL_ERROR_INVAL;
+        return PAL_ERROR_INVAL;
 
     *out_passthrough = !!passthrough_int;
     *out_val = NULL;
@@ -113,7 +113,7 @@ static int get_env_value_from_manifest(toml_table_t* toml_envs, const char* key,
 static int create_empty_envs(const char*** out_envp) {
     const char** new_envp = malloc(sizeof(*new_envp));
     if (!new_envp)
-        return -PAL_ERROR_NOMEM;
+        return PAL_ERROR_NOMEM;
 
     new_envp[0] = NULL;
     *out_envp = new_envp;
@@ -129,13 +129,13 @@ static int deep_copy_envs(const char** envp, const char*** out_envp) {
 
     const char** new_envp = calloc(orig_envs_cnt + 1, sizeof(const char*));
     if (!new_envp)
-        return -PAL_ERROR_NOMEM;
+        return PAL_ERROR_NOMEM;
 
     size_t idx = 0;
     for (const char** orig_env = envp; *orig_env; orig_env++) {
         new_envp[idx] = strdup(*orig_env);
         if (!new_envp[idx])
-            return -PAL_ERROR_NOMEM;
+            return PAL_ERROR_NOMEM;
         idx++;
     }
     assert(idx == orig_envs_cnt);
@@ -164,11 +164,11 @@ static int build_envs(const char** orig_envp, bool propagate, const char*** out_
 
     ssize_t toml_envs_cnt = toml_table_nkval(toml_envs);
     if (toml_envs_cnt < 0)
-        return -PAL_ERROR_INVAL;
+        return PAL_ERROR_INVAL;
 
     ssize_t toml_env_tables_cnt = toml_table_ntab(toml_envs);
     if (toml_env_tables_cnt < 0)
-        return -PAL_ERROR_INVAL;
+        return PAL_ERROR_INVAL;
 
     toml_envs_cnt += toml_env_tables_cnt;
     if (toml_envs_cnt == 0)
@@ -183,7 +183,7 @@ static int build_envs(const char** orig_envp, bool propagate, const char*** out_
     size_t total_envs_cnt = orig_envs_cnt + toml_envs_cnt;
     const char** new_envp = calloc(total_envs_cnt + 1, sizeof(const char*));
     if (!new_envp)
-        return -PAL_ERROR_NOMEM;
+        return PAL_ERROR_NOMEM;
 
     size_t idx = 0;
 
@@ -192,11 +192,11 @@ static int build_envs(const char** orig_envp, bool propagate, const char*** out_
     for (const char** orig_env = orig_envp; *orig_env; orig_env++) {
         char* orig_env_key_end = strchr(*orig_env, '=');
         if (!orig_env_key_end)
-            return -PAL_ERROR_INVAL;
+            return PAL_ERROR_INVAL;
 
         char* env_key = alloc_substr(*orig_env, orig_env_key_end - *orig_env);
         if (!env_key)
-            return -PAL_ERROR_NOMEM;
+            return PAL_ERROR_NOMEM;
 
         bool exists;
         char* env_val;
@@ -210,7 +210,7 @@ static int build_envs(const char** orig_envp, bool propagate, const char*** out_
         if ((propagate && !exists) || (exists && passthrough)) {
             new_envp[idx] = strdup(*orig_env);
             if (!new_envp[idx])
-                return -PAL_ERROR_NOMEM;
+                return PAL_ERROR_NOMEM;
             idx++;
         }
 
@@ -237,7 +237,7 @@ static int build_envs(const char** orig_envp, bool propagate, const char*** out_
             log_error("Detected environment variable '%s' with `passthrough = false`. For security"
                       " reasons, Gramine doesn't allow this. Please see documentation on"
                       " 'loader.env' for details.", toml_env_key);
-            return -PAL_ERROR_DENIED;
+            return PAL_ERROR_DENIED;
         }
 
         if (!env_val) {
@@ -247,7 +247,7 @@ static int build_envs(const char** orig_envp, bool propagate, const char*** out_
 
         char* final_env = alloc_concat3(toml_env_key, -1, "=", 1, env_val, -1);
         if (!final_env)
-            return -PAL_ERROR_NOMEM;
+            return PAL_ERROR_NOMEM;
 
         new_envp[idx++] = final_env;
         free(env_val);
@@ -322,14 +322,14 @@ static int load_cstring_array(const char* uri, const char*** res) {
     size_t file_size = attr.pending_size;
     buf = malloc(file_size);
     if (!buf) {
-        ret = -PAL_ERROR_NOMEM;
+        ret = PAL_ERROR_NOMEM;
         goto out_fail;
     }
     ret = _PalStreamRead(hdl, 0, file_size, buf);
     if (ret < 0)
         goto out_fail;
     if (file_size > 0 && buf[file_size - 1] != '\0') {
-        ret = -PAL_ERROR_INVAL;
+        ret = PAL_ERROR_INVAL;
         goto out_fail;
     }
 
@@ -339,7 +339,7 @@ static int load_cstring_array(const char* uri, const char*** res) {
             count++;
     array = malloc(sizeof(char*) * (count + 1));
     if (!array) {
-        ret = -PAL_ERROR_NOMEM;
+        ret = PAL_ERROR_NOMEM;
         goto out_fail;
     }
     array[count] = NULL;
@@ -389,8 +389,8 @@ noreturn void pal_main(uint64_t instance_id,       /* current instance id */
 
     toml_table_t* manifest_loader = toml_table_in(g_pal_public_state.manifest_root, "loader");
     if (manifest_loader == NULL) {
-        INIT_FAIL("'loader' section wasn't configured in the manifest, at least 'loader.entrypoint' "
-                  "needs to be defined");
+        INIT_FAIL("'loader' section wasn't configured in the manifest, at least "
+                  "'loader.entrypoint.uri' needs to be defined");
     }
 
     char* dummy_exec_str = NULL;
@@ -445,13 +445,20 @@ noreturn void pal_main(uint64_t instance_id,       /* current instance id */
         INIT_FAIL_MANIFEST("Cannot parse 'libos.entrypoint'");
 
     if (!argv0_override) {
-        /* possible in e.g. PAL regression tests, in this case use loader.entrypoint */
-        ret = toml_string_in(manifest_loader, "entrypoint", &argv0_override);
-        if (ret < 0)
-            INIT_FAIL_MANIFEST("Cannot parse 'loader.entrypoint'");
+        /* possible in e.g. PAL regression tests, in this case use loader.entrypoint.uri */
+        ret = toml_string_in(manifest_loader, "entrypoint.uri", &argv0_override);
+        if (ret < 0 || !argv0_override) {
+            /* didn't find `loader.entrypoint.uri`, try deprecated `loader.entrypoint`;
+             * TODO: remove this in Gramine v1.9 */
+            ret = toml_string_in(manifest_loader, "entrypoint", &argv0_override);
+            if (ret < 0) {
+                INIT_FAIL_MANIFEST("Cannot parse 'loader.entrypoint.uri'");
+            }
+        }
 
         if (!argv0_override)
-            INIT_FAIL("'libos.entrypoint' and 'loader.entrypoint' are not specified in manifest");
+            INIT_FAIL("'libos.entrypoint' and 'loader.entrypoint.uri' are not specified in "
+                      "the manifest");
     }
     assert(argv0_override);
 
@@ -558,15 +565,23 @@ noreturn void pal_main(uint64_t instance_id,       /* current instance id */
     free(env_src_file);
 
     char* entrypoint_name = NULL;
-    ret = toml_string_in(manifest_loader, "entrypoint", &entrypoint_name);
-    if (ret < 0)
-        INIT_FAIL_MANIFEST("Cannot parse 'loader.entrypoint'");
+    ret = toml_string_in(manifest_loader, "entrypoint.uri", &entrypoint_name);
+    if (ret < 0 || !entrypoint_name) {
+        /* didn't find `loader.entrypoint.uri`, try deprecated `loader.entrypoint`;
+         * TODO: remove this in Gramine v1.9 */
+        ret = toml_string_in(manifest_loader, "entrypoint", &entrypoint_name);
+        if (ret < 0) {
+            INIT_FAIL_MANIFEST("Cannot parse 'loader.entrypoint.uri'");
+        }
+        log_warning("Detected deprecated manifest option 'loader.entrypoint'. Please switch to "
+                    "'loader.entrypoint.uri'.");
+    }
 
     if (!entrypoint_name)
-        INIT_FAIL("No 'loader.entrypoint' is specified in the manifest");
+        INIT_FAIL("No 'loader.entrypoint.uri' is specified in the manifest");
 
     if (!strstartswith(entrypoint_name, URI_PREFIX_FILE))
-        INIT_FAIL("'loader.entrypoint' is missing the 'file:' prefix");
+        INIT_FAIL("'loader.entrypoint.uri' is missing the 'file:' prefix");
 
     g_pal_public_state.host_type       = XSTRINGIFY(HOST_TYPE);
     g_pal_public_state.parent_process  = parent_process;
@@ -580,7 +595,7 @@ noreturn void pal_main(uint64_t instance_id,       /* current instance id */
 
     ret = load_entrypoint(entrypoint_name);
     if (ret < 0)
-        INIT_FAIL("Unable to load loader.entrypoint: %ld", ret);
+        INIT_FAIL("Unable to load loader entrypoint: %ld", ret);
     free(entrypoint_name);
 
     if (post_callback)

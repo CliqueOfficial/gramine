@@ -77,7 +77,7 @@ int sys_print_as_bitmask(char* buf, size_t buf_size, size_t count,
     uint32_t word = 0;
     while (1) {
         if (is_present(pos, callback_arg))
-            word |= 1 << pos % 32;
+            word |= 1U << pos % 32;
         if (pos % 32 == 0) {
             if (count <= 32) {
                 /* Linux sysfs quirk: small bitmasks are printed without leading zeroes. */
@@ -269,6 +269,7 @@ static void init_cpu_dir(struct pseudo_node* cpu) {
     indexX->list_names = &sys_resource_list_names;
 
     pseudo_add_str(indexX, "shared_cpu_map", &sys_cache_load);
+    pseudo_add_str(indexX, "shared_cpu_list", &sys_cache_load);
     pseudo_add_str(indexX, "level", &sys_cache_load);
     pseudo_add_str(indexX, "type", &sys_cache_load);
     pseudo_add_str(indexX, "size", &sys_cache_load);

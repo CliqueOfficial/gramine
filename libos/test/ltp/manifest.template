@@ -1,4 +1,3 @@
-loader.entrypoint = "file:{{ gramine.libos }}"
 libos.entrypoint = "{{ entrypoint }}"
 
 loader.env.LD_LIBRARY_PATH = "/lib:{{ arch_libdir }}:/usr/lib:/usr/lib64"
@@ -15,7 +14,8 @@ fs.mounts = [
   { path = "{{ arch_libdir }}", uri = "file:{{ arch_libdir }}" },
   { path = "/usr", uri = "file:/usr" },
   { path = "/tmp", uri = "file:/tmp" },
-  # for tests that require POSIX shared memory support
+
+  # many LTP multi-process tests rely on shared-memory IPC via `mmap(MAP_SHARED, </dev/shm fd>)`
   { type = "untrusted_shm", path = "/dev/shm", uri = "dev:/dev/shm" },
 ]
 
@@ -32,11 +32,10 @@ sgx.use_exinfo = true
 
 sgx.allowed_files = [
   "file:/tmp",
-  "dev:/dev/shm/", # for tests that require POSIX shared memory support
+  "dev:/dev/shm/", # for tests that rely on shared-memory IPC, see note above
 ]
 
 sgx.trusted_files = [
-  "file:{{ gramine.libos }}",
   "file:{{ binary_dir }}/{{ entrypoint }}",
   "file:{{ gramine.runtimedir() }}/ld-linux-x86-64.so.2",
   "file:{{ gramine.runtimedir() }}/libc.so.6",

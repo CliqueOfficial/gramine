@@ -234,42 +234,20 @@ static ssize_t chroot_write(struct libos_handle* hdl, const void* buf, size_t co
         return pal_to_unix_errno(ret);
     }
     assert(actual_count <= count);
+
+    size_t new_size = 0;
     if (hdl->inode->type == S_IFREG) {
         *pos += actual_count;
         /* Update file size if we just wrote past the end of file */
         lock(&hdl->inode->lock);
         if (hdl->inode->size < *pos)
             hdl->inode->size = *pos;
+        new_size = hdl->inode->size;
         unlock(&hdl->inode->lock);
     }
 
-    /* If there are any MAP_SHARED mappings for the file, this will read data from `hdl`. */
-    if (__atomic_load_n(&hdl->inode->num_mmapped, __ATOMIC_ACQUIRE) != 0) {
-        ret = reload_mmaped_from_file_handle(hdl);
-        if (ret < 0) {
-            log_error("reload mmapped regions of file failed: %s", unix_strerror(ret));
-            BUG();
-        }
-    }
-
+    refresh_mappings_on_file(hdl, new_size, /*reload_file_contents=*/true);
     return (ssize_t)actual_count;
-}
-
-static int chroot_mmap(struct libos_handle* hdl, void* addr, size_t size, int prot, int flags,
-                       uint64_t offset) {
-    assert(hdl->type == TYPE_CHROOT);
-    assert(addr);
-
-    pal_prot_flags_t pal_prot = LINUX_PROT_TO_PAL(prot, flags);
-
-    if (flags & MAP_ANONYMOUS)
-        return -EINVAL;
-
-    int ret = PalStreamMap(hdl->pal_handle, addr, pal_prot, offset, size);
-    if (ret < 0)
-        return pal_to_unix_errno(ret);
-
-    return 0;
 }
 
 int chroot_readdir(struct libos_dentry* dent, readdir_callback_t callback, void* arg) {
@@ -333,7 +311,7 @@ out:
     return ret;
 }
 
-int chroot_unlink(struct libos_dentry* dent) {
+static int chroot_unlink(struct libos_dentry* dent) {
     assert(locked(&g_dcache_lock));
     assert(dent->inode);
 
@@ -419,7 +397,8 @@ struct libos_fs_ops chroot_fs_ops = {
     .flush      = &chroot_flush,
     .read       = &chroot_read,
     .write      = &chroot_write,
-    .mmap       = &chroot_mmap,
+    .mmap       = &generic_emulated_mmap,
+    .msync      = &generic_emulated_msync,
     /* TODO: this function emulates lseek() completely inside the LibOS, but some device files may
      * report size == 0 during fstat() and may provide device-specific lseek() logic; this emulation
      * breaks for such device-specific cases */

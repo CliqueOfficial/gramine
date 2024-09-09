@@ -139,7 +139,7 @@ static int sanitize_topo_info(struct pal_topo_info* topo_info) {
         if (cache->type != CACHE_TYPE_DATA &&
             cache->type != CACHE_TYPE_INSTRUCTION &&
             cache->type != CACHE_TYPE_UNIFIED) {
-            return -PAL_ERROR_INVAL;
+            return PAL_ERROR_INVAL;
         }
 
         if (   !IS_IN_RANGE_INCL(cache->level, 1, 3)
@@ -147,12 +147,12 @@ static int sanitize_topo_info(struct pal_topo_info* topo_info) {
             || !IS_IN_RANGE_INCL(cache->coherency_line_size, 1, 1 << 16)
             || !IS_IN_RANGE_INCL(cache->number_of_sets, 1, 1 << 30)
             || !IS_IN_RANGE_INCL(cache->physical_line_partition, 1, 1 << 16))
-            return -PAL_ERROR_INVAL;
+            return PAL_ERROR_INVAL;
     }
 
     if (topo_info->threads_cnt == 0 || !topo_info->threads[0].is_online) {
         // Linux requires this
-        return -PAL_ERROR_INVAL;
+        return PAL_ERROR_INVAL;
     }
 
     for (size_t i = 0; i < topo_info->threads_cnt; i++) {
@@ -160,17 +160,17 @@ static int sanitize_topo_info(struct pal_topo_info* topo_info) {
         coerce_untrusted_bool(&thread->is_online);
         if (thread->is_online) {
             if (thread->core_id >= topo_info->cores_cnt)
-                return -PAL_ERROR_INVAL;
+                return PAL_ERROR_INVAL;
             /* Verify that the cache array has no holes... */
             for (size_t j = 0; j < MAX_CACHES - 1; j++)
                 if (thread->ids_of_caches[j] == (size_t)-1
                         && thread->ids_of_caches[j + 1] != (size_t)-1)
-                    return -PAL_ERROR_INVAL;
+                    return PAL_ERROR_INVAL;
             /* ...and valid indices. */
             for (size_t j = 0; j < MAX_CACHES; j++) {
                 if (thread->ids_of_caches[j] != (size_t)-1
                     && thread->ids_of_caches[j] >= topo_info->caches_cnt)
-                    return -PAL_ERROR_INVAL;
+                    return PAL_ERROR_INVAL;
             }
         } else {
             // Not required, just a hardening in case we accidentally accessed offline CPU's fields.
@@ -182,14 +182,14 @@ static int sanitize_topo_info(struct pal_topo_info* topo_info) {
 
     for (size_t i = 0; i < topo_info->cores_cnt; i++) {
         if (topo_info->cores[i].socket_id >= topo_info->sockets_cnt)
-            return -PAL_ERROR_INVAL;
+            return PAL_ERROR_INVAL;
         if (topo_info->cores[i].node_id >= topo_info->numa_nodes_cnt)
-            return -PAL_ERROR_INVAL;
+            return PAL_ERROR_INVAL;
     }
 
     if (!topo_info->numa_nodes[0].is_online) {
         // Linux requires this
-        return -PAL_ERROR_INVAL;
+        return PAL_ERROR_INVAL;
     }
 
     for (size_t i = 0; i < topo_info->numa_nodes_cnt; i++) {
@@ -199,7 +199,7 @@ static int sanitize_topo_info(struct pal_topo_info* topo_info) {
             for (size_t j = 0; j < HUGEPAGES_MAX; j++) {
                 size_t unused; // can't use __builtin_mul_overflow_p because clang doesn't have it.
                 if (__builtin_mul_overflow(node->nr_hugepages[j], hugepage_size[j], &unused))
-                    return -PAL_ERROR_INVAL;
+                    return PAL_ERROR_INVAL;
             }
         } else {
             /* Not required, just a hardening in case we accidentally accessed offline node's
@@ -215,10 +215,10 @@ static int sanitize_topo_info(struct pal_topo_info* topo_info) {
         for (size_t j = 0; j < topo_info->numa_nodes_cnt; j++) {
             if ((!topo_info->numa_nodes[i].is_online || !topo_info->numa_nodes[j].is_online) &&
                     topo_info->numa_distance_matrix[i*topo_info->numa_nodes_cnt + j] != 0)
-                return -PAL_ERROR_INVAL;
+                return PAL_ERROR_INVAL;
             if (   topo_info->numa_distance_matrix[i*topo_info->numa_nodes_cnt + j]
                 != topo_info->numa_distance_matrix[j*topo_info->numa_nodes_cnt + i])
-                return -PAL_ERROR_INVAL;
+                return PAL_ERROR_INVAL;
         }
     }
 
@@ -230,7 +230,7 @@ static int sanitize_topo_info(struct pal_topo_info* topo_info) {
             continue;
         size_t node_id = topo_info->cores[thread->core_id].node_id;
         if (!topo_info->numa_nodes[node_id].is_online)
-            return -PAL_ERROR_INVAL;
+            return PAL_ERROR_INVAL;
     }
 
     return 0;
@@ -242,7 +242,7 @@ static int import_and_sanitize_topo_info(void* uptr_topo_info) {
     struct pal_topo_info shallow_topo_info;
     if (!sgx_copy_to_enclave(&shallow_topo_info, sizeof(shallow_topo_info),
                              uptr_topo_info, sizeof(struct pal_topo_info))) {
-        return -PAL_ERROR_DENIED;
+        return PAL_ERROR_DENIED;
     }
 
     struct pal_topo_info* topo_info = &g_pal_public_state.topo_info;
@@ -264,7 +264,7 @@ static int import_and_sanitize_topo_info(void* uptr_topo_info) {
                                                       numa_nodes_cnt,
                                                       numa_nodes_cnt);
     if (!caches || !threads || !cores || !sockets || !numa_nodes || !distances) {
-        return -PAL_ERROR_NOMEM;
+        return PAL_ERROR_NOMEM;
     }
 
     topo_info->caches = caches;
@@ -410,148 +410,6 @@ extern bool g_allowed_files_warn;
 extern uint64_t g_tsc_hz;
 extern size_t g_unused_tcs_pages_num;
 
-static int print_warnings_on_insecure_configs(PAL_HANDLE parent_process) {
-    int ret;
-
-    if (parent_process) {
-        /* Warn only in the first process. */
-        return 0;
-    }
-
-    bool verbose_log_level    = false;
-    bool sgx_debug            = false;
-    bool use_cmdline_argv     = false;
-    bool use_host_env         = false;
-    bool disable_aslr         = false;
-    bool allow_eventfd        = false;
-    bool experimental_flock   = false;
-    bool allow_all_files      = false;
-    bool use_allowed_files    = g_allowed_files_warn;
-    bool encrypted_files_keys = false;
-    bool memfaults_without_exinfo_allowed = g_pal_linuxsgx_state.memfaults_without_exinfo_allowed;
-
-    char* log_level_str = NULL;
-
-    ret = toml_string_in(g_pal_public_state.manifest_root, "loader.log_level", &log_level_str);
-    if (ret < 0)
-        goto out;
-    if (log_level_str && strcmp(log_level_str, "none") && strcmp(log_level_str, "error"))
-        verbose_log_level = true;
-
-    ret = toml_bool_in(g_pal_public_state.manifest_root, "sgx.debug",
-                       /*defaultval=*/false, &sgx_debug);
-    if (ret < 0)
-        goto out;
-
-    ret = toml_bool_in(g_pal_public_state.manifest_root, "loader.insecure__use_cmdline_argv",
-                       /*defaultval=*/false, &use_cmdline_argv);
-    if (ret < 0)
-        goto out;
-
-    ret = toml_bool_in(g_pal_public_state.manifest_root, "loader.insecure__use_host_env",
-                       /*defaultval=*/false, &use_host_env);
-    if (ret < 0)
-        goto out;
-
-    ret = toml_bool_in(g_pal_public_state.manifest_root, "loader.insecure__disable_aslr",
-                       /*defaultval=*/false, &disable_aslr);
-    if (ret < 0)
-        goto out;
-
-    ret = toml_bool_in(g_pal_public_state.manifest_root, "sys.insecure__allow_eventfd",
-                       /*defaultval=*/false, &allow_eventfd);
-    if (ret < 0)
-        goto out;
-
-    ret = toml_bool_in(g_pal_public_state.manifest_root, "sys.experimental__enable_flock",
-                       /*defaultval=*/false, &experimental_flock);
-    if (ret < 0)
-        goto out;
-
-    if (get_file_check_policy() == FILE_CHECK_POLICY_ALLOW_ALL_BUT_LOG)
-        allow_all_files = true;
-
-    toml_table_t* manifest_fs = toml_table_in(g_pal_public_state.manifest_root, "fs");
-    if (manifest_fs) {
-        toml_table_t* manifest_fs_keys = toml_table_in(manifest_fs, "insecure__keys");
-        if (manifest_fs_keys) {
-            ret = toml_table_nkval(manifest_fs_keys);
-            if (ret < 0)
-                goto out;
-
-            if (ret > 0)
-                encrypted_files_keys = true;
-        }
-    }
-
-    if (!verbose_log_level && !sgx_debug && !use_cmdline_argv && !use_host_env && !disable_aslr &&
-            !allow_eventfd && !experimental_flock && !allow_all_files && !use_allowed_files &&
-            !encrypted_files_keys && !memfaults_without_exinfo_allowed) {
-        /* there are no insecure configurations, skip printing */
-        ret = 0;
-        goto out;
-    }
-
-    log_always("-------------------------------------------------------------------------------"
-               "----------------------------------------");
-    log_always("Gramine detected the following insecure configurations:\n");
-
-    if (sgx_debug)
-        log_always("  - sgx.debug = true                           "
-                   "(this is a debug enclave)");
-
-    if (verbose_log_level)
-        log_always("  - loader.log_level = warning|debug|trace|all "
-                   "(verbose log level, may leak information)");
-
-    if (use_cmdline_argv)
-        log_always("  - loader.insecure__use_cmdline_argv = true   "
-                   "(forwarding command-line args from untrusted host to the app)");
-
-    if (use_host_env)
-        log_always("  - loader.insecure__use_host_env = true       "
-                   "(forwarding environment vars from untrusted host to the app)");
-
-    if (disable_aslr)
-        log_always("  - loader.insecure__disable_aslr = true       "
-                   "(Address Space Layout Randomization is disabled)");
-
-    if (allow_eventfd)
-        log_always("  - sys.insecure__allow_eventfd = true         "
-                   "(host-based eventfd is enabled)");
-
-    if (experimental_flock)
-        log_always("  - sys.experimental__enable_flock = true      "
-                   "(flock syscall is enabled; still under development and may contain bugs)");
-
-    if (memfaults_without_exinfo_allowed)
-        log_always("  - sgx.insecure__allow_memfaults_without_exinfo "
-                   "(allow memory faults even when SGX EXINFO is not supported by CPU)");
-
-    if (allow_all_files)
-        log_always("  - sgx.file_check_policy = allow_all_but_log  "
-                   "(all files are passed through from untrusted host without verification)");
-
-    if (use_allowed_files)
-        log_always("  - sgx.allowed_files = [ ... ]                "
-                   "(some files are passed through from untrusted host without verification)");
-
-    if (encrypted_files_keys)
-        log_always("  - fs.insecure__keys.* = \"...\"                "
-                   "(keys hardcoded in manifest)");
-
-
-    log_always("\nGramine will continue application execution, but this configuration must not be "
-               "used in production!");
-    log_always("-------------------------------------------------------------------------------"
-               "----------------------------------------\n");
-
-    ret = 0;
-out:
-    free(log_level_str);
-    return ret;
-}
-
 static void print_warning_on_invariant_tsc(PAL_HANDLE parent_process) {
     if (!parent_process && !g_tsc_hz) {
         /* Warn only in the first process. */
@@ -576,11 +434,6 @@ static void print_warnings_on_invalid_dns_host_conf(PAL_HANDLE parent_process) {
 }
 
 static void post_callback(void) {
-    if (print_warnings_on_insecure_configs(g_pal_common_state.parent_process) < 0) {
-        log_error("Cannot parse the manifest (while checking for insecure configurations)");
-        ocall_exit(1, /*is_exitgroup=*/true);
-    }
-
     print_warning_on_invariant_tsc(g_pal_common_state.parent_process);
 
     print_warnings_on_invalid_dns_host_conf(g_pal_common_state.parent_process);
@@ -614,6 +467,8 @@ noreturn void pal_linux_main(void* uptr_libpal_uri, size_t libpal_uri_len, void*
         log_error("Relocation of the PAL binary failed: %d", ret);
         ocall_exit(1, /*is_exitgroup=*/true);
     }
+
+    g_pal_public_state.confidential_computing = true;
 
     uint64_t start_time;
     ret = _PalSystemTimeQuery(&start_time);
@@ -903,7 +758,7 @@ noreturn void pal_linux_main(void* uptr_libpal_uri, size_t libpal_uri_len, void*
     }
 
     init_handle_hdr(first_thread, PAL_TYPE_THREAD);
-    first_thread->thread.tcs = (void*)(g_enclave_base + GET_ENCLAVE_TCB(tcs_offset));
+    first_thread->thread.tcs = (void*)((uintptr_t)g_enclave_base + GET_ENCLAVE_TCB(tcs_offset));
     g_pal_public_state.first_thread = first_thread;
     SET_ENCLAVE_TCB(thread, &first_thread->thread);
 

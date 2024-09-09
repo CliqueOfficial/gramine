@@ -205,12 +205,12 @@ libos_syscall_t libos_syscall_table[LIBOS_SYSCALL_BOUND] = {
     [__NR_setxattr]                = (libos_syscall_t)0, // libos_syscall_setxattr
     [__NR_lsetxattr]               = (libos_syscall_t)0, // libos_syscall_lsetxattr
     [__NR_fsetxattr]               = (libos_syscall_t)0, // libos_syscall_fsetxattr
-    [__NR_getxattr]                = (libos_syscall_t)0, // libos_syscall_getxattr
-    [__NR_lgetxattr]               = (libos_syscall_t)0, // libos_syscall_lgetxattr
-    [__NR_fgetxattr]               = (libos_syscall_t)0, // libos_syscall_fgetxattr
-    [__NR_listxattr]               = (libos_syscall_t)0, // libos_syscall_listxattr
-    [__NR_llistxattr]              = (libos_syscall_t)0, // libos_syscall_llistxattr
-    [__NR_flistxattr]              = (libos_syscall_t)0, // libos_syscall_flistxattr
+    [__NR_getxattr]                = (libos_syscall_t)libos_syscall_getxattr,
+    [__NR_lgetxattr]               = (libos_syscall_t)libos_syscall_lgetxattr,
+    [__NR_fgetxattr]               = (libos_syscall_t)libos_syscall_fgetxattr,
+    [__NR_listxattr]               = (libos_syscall_t)libos_syscall_listxattr,
+    [__NR_llistxattr]              = (libos_syscall_t)libos_syscall_llistxattr,
+    [__NR_flistxattr]              = (libos_syscall_t)libos_syscall_flistxattr,
     [__NR_removexattr]             = (libos_syscall_t)0, // libos_syscall_removexattr
     [__NR_lremovexattr]            = (libos_syscall_t)0, // libos_syscall_lremovexattr
     [__NR_fremovexattr]            = (libos_syscall_t)0, // libos_syscall_fremovexattr
@@ -377,3 +377,6 @@ libos_syscall_t libos_syscall_table[LIBOS_SYSCALL_BOUND] = {
     [__NR_futex_waitv]             = (libos_syscall_t)0, // libos_syscall_futex_waitv
     [__NR_set_mempolicy_home_node] = (libos_syscall_t)0, // libos_syscall_set_mempolicy_home_node
 };
+
+/* by default, all syscalls have `is_mocked = false` and `return_value = 0` */
+struct libos_mock_syscall libos_mock_syscall_table[LIBOS_SYSCALL_BOUND] = { 0 };
