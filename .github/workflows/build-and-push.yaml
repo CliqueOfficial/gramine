@@ -24,6 +24,7 @@ jobs:
           repo=ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}
           tag=${{ github.event.release.tag_name || github.sha }}
           url=${repo,,}:$tag
-          docker build . -t $url --build-arg GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }} -f docker/Dockerfile.base
+          cd docker
+          docker build . -t $url --build-arg GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }} -f ./Dockerfile.base
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $ --password-stdin
           docker push $url
