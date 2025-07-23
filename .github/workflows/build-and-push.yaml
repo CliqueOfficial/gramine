@@ -4,7 +4,7 @@ on:
 jobs:
   trigger:
     timeout-minutes: 30
-    runs-on: ubuntu-24.04-32c
+    runs-on: ubuntu-latest
     permissions:
       packages: write
       contents: read
