@@ -1,7 +1,4 @@
 name: build-and-push
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 on:
   workflow_dispatch:
 jobs:
