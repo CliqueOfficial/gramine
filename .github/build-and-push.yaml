@@ -1,0 +1,32 @@
+name: build-and-push
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+jobs:
+  trigger:
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          ref: ${{ env.ref }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v1
+
+      - name: Build container image
+        run: |
+          repo=ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}
+          tag=${{ github.event.release.tag_name || github.sha }}
+          url=${repo,,}:$tag
+          docker build . -t $url --build-arg GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }} -f Dockerfile.base
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $ --password-stdin
+          docker push $url
