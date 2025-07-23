@@ -1,0 +1,79 @@
+FROM gramineproject/gramine:1.7-jammy AS builder
+
+RUN apt-get update && apt-get install -y git
+RUN git clone https://github.com/CliqueOfficial/gramine.git
+
+# Dependencies for build Gramine
+RUN apt-get install -y build-essential \
+    autoconf bison gawk nasm ninja-build pkg-config python3 python3-click \
+    python3-jinja2 python3-pip python3-pyelftools python3-voluptuous wget
+RUN apt-get install -y cmake libprotobuf-c-dev protobuf-c-compiler \
+    protobuf-compiler python3-cryptography python3-pip python3-protobuf
+RUN python3 -m pip install 'meson>=0.56' 'tomli>=1.1.0' 'tomli-w>=0.4.0'
+RUN apt-get install -y libgmp-dev libmpfr-dev libmpc-dev libisl-dev
+
+# Optional, for GDB support and to run all tests locally
+# RUN apt-get install -y libunwind8 musl-tools python3-pytest
+
+# Dependencies for SGX
+RUN echo 'deb [signed-by=/etc/apt/keyrings/intel-sgx-keyring.asc arch=amd64] https://download.01.org/intel-sgx/sgx_repo/ubuntu jammy main' | tee /etc/apt/sources.list.d/intel-sgx.list
+RUN wget https://download.01.org/intel-sgx/sgx_repo/ubuntu/intel-sgx-deb.key
+RUN cat intel-sgx-deb.key | tee /etc/apt/keyrings/intel-sgx-keyring.asc > /dev/null
+RUN apt-get update
+RUN apt-get install -y libsgx-epid libsgx-quote-ex libsgx-dcap-ql
+
+# Optional, for debug with sgx-gdb
+# RUN apt-get install -y libsgx-urts-dbgsym libsgx-enclave-common-dbgsym libsgx-dcap-ql-dbgsym libsgx-dcap-default-qpl-dbgsym
+
+RUN apt-get install -y libsgx-dcap-default-qpl
+
+RUN apt-get install -y build-essential python-is-python3
+RUN wget https://download.01.org/intel-sgx/sgx-linux/2.24/distro/ubuntu22.04-server/sgx_linux_x64_sdk_2.24.100.3.bin
+RUN chmod +x sgx_linux_x64_sdk_2.24.100.3.bin
+RUN ./sgx_linux_x64_sdk_2.24.100.3.bin --prefix /opt/intel
+ENV SGX_SDK=/opt/intel/sgxsdk
+ENV PKG_CONFIG_PATH="${SGX_SDK}/pkgconfig"
+ENV LD_LIBRARY_PATH="${SGX_SDK}/sdk_libs"
+ENV PATH="${PATH}:${SGX_SDK}/bin:${SGX_SDK}/bin/x64"
+RUN rm sgx_linux_x64_sdk_2.24.100.3.bin
+
+RUN apt-get install -y libsgx-enclave-common-dev libsgx-dcap-ql-dev libsgx-dcap-default-qpl-dev
+RUN apt-get install -y libsgx-dcap-quote-verify-dev
+
+COPY sgx_default_qcnl.conf /etc/sgx_default_qcnl.conf
+COPY aesmd.conf /etc/aesmd.conf
+
+# Build Gramine
+RUN cd gramine && meson setup build/ --buildtype=release -Ddirect=enabled -Dsgx=enabled -Ddcap=enabled -Dlibgomp=enabled
+RUN cd gramine && ninja -C build/ && ninja -C build/ install
+
+
+FROM gramineproject/gramine:1.7-jammy
+
+COPY --from=builder /usr/local /usr/local
+
+RUN apt update && apt install -y wget build-essential python-is-python3 ca-certificates libssl-dev
+
+RUN wget https://download.01.org/intel-sgx/sgx-linux/2.24/distro/ubuntu22.04-server/sgx_linux_x64_sdk_2.24.100.3.bin && \
+    chmod +x sgx_linux_x64_sdk_2.24.100.3.bin && \
+    ./sgx_linux_x64_sdk_2.24.100.3.bin --prefix /opt/intel && \
+    rm sgx_linux_x64_sdk_2.24.100.3.bin
+ENV SGX_SDK=/opt/intel/sgxsdk
+ENV PKG_CONFIG_PATH="${SGX_SDK}/pkgconfig"
+ENV LD_LIBRARY_PATH="${SGX_SDK}/sdk_libs"
+ENV PATH="${PATH}:${SGX_SDK}/bin:${SGX_SDK}/bin/x64"
+
+RUN echo 'deb [signed-by=/etc/apt/keyrings/intel-sgx-keyring.asc arch=amd64] https://download.01.org/intel-sgx/sgx_repo/ubuntu jammy main' | tee /etc/apt/sources.list.d/intel-sgx.list
+RUN wget https://download.01.org/intel-sgx/sgx_repo/ubuntu/intel-sgx-deb.key
+RUN cat intel-sgx-deb.key | tee /etc/apt/keyrings/intel-sgx-keyring.asc > /dev/null
+RUN apt update && apt install -y libsgx-epid libsgx-quote-ex libsgx-dcap-ql libsgx-dcap-default-qpl \
+    libsgx-enclave-common-dev libsgx-dcap-ql-dev libsgx-dcap-default-qpl-dev libsgx-dcap-quote-verify-dev
+
+COPY sgx_default_qcnl.conf /etc/sgx_default_qcnl.conf
+COPY aesmd.conf /etc/aesmd.conf
+
+RUN echo "#!/bin/bash" > /run.sh
+RUN echo "/restart_aesm.sh" >> /run.sh
+RUN echo "bash" >> /run.sh
+RUN chmod +x /run.sh
+ENTRYPOINT ["/run.sh"]
